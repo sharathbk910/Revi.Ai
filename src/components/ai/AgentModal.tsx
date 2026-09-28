@@ -6,6 +6,7 @@ import {
   formatFileSize,
   isAcceptableFile,
   type AgentAttachment,
+  type AgentContextPayload,
   type AgentHistoryMessage,
   type AgentServerResponse,
 } from '../../services/agentService';
@@ -19,6 +20,7 @@ import {
   AlertTriangle,
   Loader2,
   UploadCloud,
+  Sparkles,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +81,7 @@ const QUICK_ACTIONS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 function renderMarkdown(text: string): React.ReactNode[] {
+  if (!text || typeof text !== 'string') return [];
   const lines = text.split('\n');
   return lines.map((line, i) => {
     // Bold
@@ -306,6 +309,21 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
   const abortControllerRef = useRef<AbortController | null>(null);
   const modalId = useId();
 
+  // ── Build context payload ────────────────────────────────────────────────
+  const buildContext = useCallback((): AgentContextPayload => ({
+    exams: exams.map(e => ({ id: e.id, name: e.name, date: e.date, time: e.time, subjectName: e.subjectName })),
+    subjects: subjects.map(s => ({ id: s.id, name: s.name })),
+    topics: topics.map(t => ({ id: t.id, title: t.title, subjectName: t.subjectName, completed: t.completed, priority: t.priority })),
+    tasks: tasks.map(t => ({ id: t.id, date: t.date, topicTitle: t.topicTitle, subjectName: t.subjectName, status: t.status, startTime: t.startTime })),
+    missedTasks: missedTasks.map(t => ({ id: t.id, topicTitle: t.topicTitle, subjectName: t.subjectName, date: t.date })),
+    overallProgressPercent,
+    completedCount,
+    totalTopicsCount,
+    dailyHours: availability?.dailyHours || 3,
+    referenceDate,
+    sessionDuration: preferences?.sessionDuration || 45,
+  }), [exams, subjects, topics, tasks, missedTasks, overallProgressPercent, completedCount, totalTopicsCount, availability, referenceDate, preferences]);
+
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -330,30 +348,19 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Focus input when opened
+  // Focus input when opened and handle Escape key
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100);
+      const handleKeyDownGlobal = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          onClose();
+        }
+      };
+      window.addEventListener('keydown', handleKeyDownGlobal);
+      return () => window.removeEventListener('keydown', handleKeyDownGlobal);
     }
-  }, [isOpen]);
-
-  if (!isOpen) return null;
-
-  // ── Build context payload ────────────────────────────────────────────────
-
-  const buildContext = () => ({
-    exams: exams.map(e => ({ id: e.id, name: e.name, date: e.date, time: e.time, subjectName: e.subjectName })),
-    subjects: subjects.map(s => ({ id: s.id, name: s.name })),
-    topics: topics.map(t => ({ id: t.id, title: t.title, subjectName: t.subjectName, completed: t.completed, priority: t.priority })),
-    tasks: tasks.map(t => ({ id: t.id, date: t.date, topicTitle: t.topicTitle, subjectName: t.subjectName, status: t.status, startTime: t.startTime })),
-    missedTasks: missedTasks.map(t => ({ id: t.id, topicTitle: t.topicTitle, subjectName: t.subjectName, date: t.date })),
-    overallProgressPercent,
-    completedCount,
-    totalTopicsCount,
-    dailyHours: availability?.dailyHours || 3,
-    referenceDate,
-    sessionDuration: preferences?.sessionDuration || 45,
-  });
+  }, [isOpen, onClose]);
 
   // ── Add message helper ────────────────────────────────────────────────────
 
@@ -640,30 +647,32 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
   // Render
   // ─────────────────────────────────────────────────────────────────────────
 
+  if (!isOpen) return null;
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-end"
+      className="fixed inset-0 z-50 flex items-stretch justify-end bg-black/70 backdrop-blur-xs animate-in fade-in duration-150"
       role="dialog"
       aria-modal="true"
       aria-labelledby={`${modalId}-title`}
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/50"
+        className="absolute inset-0 z-0 cursor-pointer"
         onClick={onClose}
-        aria-hidden="true"
+        aria-label="Close assistant overlay"
       />
 
-      {/* Panel */}
+      {/* Main Panel */}
       <div
-        className="relative flex flex-col bg-[var(--card)] border-l border-[var(--border)] w-full max-w-md shadow-2xl"
+        className="relative z-10 flex flex-col bg-[var(--card)] border-l border-[var(--border)] w-full max-w-lg h-full max-h-[100dvh] shadow-2xl overflow-hidden font-mono"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
         {/* Drag overlay */}
         {isDragOver && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--background)]/90 border-2 border-dashed border-[var(--accent)] pointer-events-none">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--background)]/90 border-2 border-dashed border-[var(--accent)] pointer-events-none">
             <div className="text-center">
               <UploadCloud className="w-8 h-8 text-[var(--accent)] mx-auto mb-2" />
               <div className="font-mono text-xs text-[var(--accent)] uppercase tracking-widest">DROP FILES HERE</div>
@@ -672,27 +681,38 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         )}
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between p-4 border-b border-[var(--border)] shrink-0">
-          <div>
-            <div className="font-mono text-[10px] text-[var(--accent)] uppercase tracking-widest mb-0.5">
-              REVISIONLY AI
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] bg-[var(--card)] shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 border border-[var(--accent)] bg-[var(--accent)]/10 flex items-center justify-center text-[var(--accent)] shrink-0">
+              <Sparkles className="w-4 h-4" />
             </div>
-            <div
-              className={`font-mono text-[9px] uppercase tracking-widest flex items-center gap-1.5 ${
-                isbusy ? 'text-[var(--accent)]' : status === 'error' ? 'text-red-500' : 'text-[var(--muted-foreground)]'
-              }`}
-            >
-              {isbusy ? (
-                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-              ) : (
-                <span className={`w-1.5 h-1.5 rounded-full ${status === 'idle' ? 'bg-emerald-500' : 'bg-red-500'}`} />
-              )}
-              {STATUS_LABELS[status]}
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 id={`${modalId}-title`} className="font-display text-sm font-bold uppercase tracking-wider text-[var(--foreground)]">
+                  REVISIONLY AI
+                </h2>
+                <span className="text-[9px] px-1.5 py-0.2 border border-[var(--accent)]/40 text-[var(--accent)] uppercase font-semibold">
+                  AGENT
+                </span>
+              </div>
+              <div
+                className={`text-[10px] uppercase tracking-wider flex items-center gap-1.5 mt-0.5 ${
+                  isbusy ? 'text-[var(--accent)]' : status === 'error' ? 'text-red-500' : 'text-[var(--muted-foreground)]'
+                }`}
+              >
+                {isbusy ? (
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                ) : (
+                  <span className={`w-2 h-2 rounded-full ${status === 'idle' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-red-500'}`} />
+                )}
+                {STATUS_LABELS[status]}
+              </div>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors p-1.5 -mr-1"
+            className="p-2 border border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+            title="Close AI Assistant (Esc)"
             aria-label="Close AI assistant"
           >
             <X className="w-4 h-4" />
@@ -700,13 +720,13 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         </div>
 
         {/* ── Quick Actions ──────────────────────────────────────────────── */}
-        <div className="p-3 border-b border-[var(--border)] flex gap-1.5 overflow-x-auto shrink-0 scrollbar-none">
+        <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--muted)]/40 flex gap-2 overflow-x-auto shrink-0 scrollbar-none">
           {QUICK_ACTIONS.map(action => (
             <button
               key={action.label}
               onClick={() => handleSubmit(action.prompt)}
               disabled={isbusy}
-              className="shrink-0 px-2.5 py-1.5 border border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent)] hover:text-[var(--accent)] font-mono text-[9px] uppercase tracking-wide whitespace-nowrap transition-colors disabled:opacity-40"
+              className="shrink-0 px-3 py-1.5 border border-[var(--border)] bg-[var(--background)] hover:border-[var(--accent)] hover:text-[var(--accent)] text-[10px] uppercase tracking-wider whitespace-nowrap transition-colors disabled:opacity-40"
             >
               {action.label}
             </button>
@@ -714,7 +734,7 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         </div>
 
         {/* ── Messages ───────────────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-4">
           {messages.map(msg => (
             <div key={msg.id} className={`flex flex-col ${msg.type === 'user' ? 'items-end' : 'items-start'}`}>
               {/* Sender label + time */}
@@ -871,62 +891,81 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         )}
 
         {/* ── Composer ───────────────────────────────────────────────────── */}
-        <div className="border-t border-[var(--border)] p-3 shrink-0 bg-[var(--card)]">
-          <div className="flex items-end gap-2">
-            {/* File buttons */}
-            <div className="flex items-center gap-1 shrink-0">
+        <div className="border-t border-[var(--border)] p-4 shrink-0 bg-[var(--card)] space-y-2">
+          {/* File buttons & quick tools */}
+          <div className="flex items-center justify-between text-[10px] text-[var(--muted-foreground)]">
+            <div className="flex items-center gap-2">
+              <span className="uppercase tracking-wider font-semibold text-[var(--foreground)]">Chat Input</span>
+              <span>·</span>
+              <span>Attach:</span>
               <button
+                type="button"
                 id={`${modalId}-doc-btn`}
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-                title="Upload document (PDF, TXT, CSV, DOCX)"
-                aria-label="Upload document"
+                className="inline-flex items-center gap-1 hover:text-[var(--accent)] transition-colors cursor-pointer"
+                title="Upload syllabus PDF or exam timetable"
               >
-                <Paperclip className="w-4 h-4" />
+                <Paperclip className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span className="underline underline-offset-2">Doc/PDF</span>
               </button>
               <button
+                type="button"
                 id={`${modalId}-img-btn`}
                 onClick={() => imageInputRef.current?.click()}
-                className="p-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-                title="Upload image (JPG, PNG, WEBP)"
-                aria-label="Upload image"
+                className="inline-flex items-center gap-1 hover:text-[var(--accent)] transition-colors cursor-pointer"
+                title="Upload timetable photo or image"
               >
-                <ImageIcon className="w-4 h-4" />
+                <ImageIcon className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span className="underline underline-offset-2">Photo</span>
               </button>
             </div>
+            <span className="hidden sm:inline text-[9px]">Shift+Enter for newline</span>
+          </div>
 
+          {/* Input Box Container */}
+          <div className="flex items-end gap-2 p-2.5 border border-[var(--border)] bg-[var(--input)] focus-within:border-[var(--accent)] transition-colors">
             {/* Text input */}
             <textarea
               ref={inputRef}
               id={`${modalId}-input`}
               value={inputText}
-              onChange={e => setInputText(e.target.value)}
+              onChange={e => {
+                setInputText(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+              }}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything... or upload a file"
+              placeholder="Ask anything, type exam date, or request a schedule rebuild..."
               rows={1}
-              className="flex-1 resize-none bg-transparent border-0 outline-none font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] min-h-[36px] max-h-[120px] py-2 leading-relaxed"
-              style={{ fieldSizing: 'content' } as React.CSSProperties}
+              className="flex-1 resize-none bg-transparent border-0 outline-none font-mono text-xs text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] min-h-[40px] max-h-[120px] py-1 leading-relaxed"
               disabled={isbusy}
               aria-label="Message input"
             />
 
             {/* Send button */}
             <button
+              type="button"
               id={`${modalId}-send-btn`}
               onClick={() => handleSubmit()}
               disabled={isbusy || (!inputText.trim() && attachments.length === 0)}
-              className="btn-primary p-2 shrink-0 disabled:opacity-40"
+              className="btn-primary text-xs px-4 py-2 min-h-[40px] shrink-0 disabled:opacity-40 flex items-center gap-1.5"
+              title="Send message (Enter)"
               aria-label="Send message"
             >
-              {isbusy
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4" />
-              }
+              {isbusy ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Send className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline text-[10px]">SEND</span>
+                </>
+              )}
             </button>
           </div>
 
-          <div className="mt-1.5 font-mono text-[9px] text-[var(--muted-foreground)]">
-            ENTER to send · SHIFT+ENTER for newline · Drag files here
+          <div className="font-mono text-[9px] text-[var(--muted-foreground)] flex items-center justify-between">
+            <span>Press Enter to send · Drag & drop files anywhere</span>
+            <span>Revisionly AI Agent v2</span>
           </div>
         </div>
 

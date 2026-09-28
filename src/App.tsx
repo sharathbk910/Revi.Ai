@@ -166,13 +166,17 @@ const AppContent: React.FC = () => {
   );
 };
 
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+
 export function App() {
   return (
-    <ThemeProvider>
-      <PlannerProvider>
-        <AppContent />
-      </PlannerProvider>
-    </ThemeProvider>
+    <ErrorBoundary fallbackTitle="Revisionly Application Error">
+      <ThemeProvider>
+        <PlannerProvider>
+          <AppContent />
+        </PlannerProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 
