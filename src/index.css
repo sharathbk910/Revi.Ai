@@ -1,0 +1,279 @@
+@import "tailwindcss";
+
+:root {
+  /* Dark Mode Default Theme Tokens */
+  --background: #0A0A0A;
+  --foreground: #FAFAFA;
+  --muted: #1A1A1A;
+  --muted-foreground: #737373;
+  --accent: #FF3D00;
+  --accent-foreground: #0A0A0A;
+  --border: #262626;
+  --input: #1A1A1A;
+  --card: #0F0F0F;
+  --card-foreground: #FAFAFA;
+  --ring: #FF3D00;
+
+  /* Typography */
+  --font-primary: 'Inter Tight', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-editorial: 'Playfair Display', Georgia, serif;
+}
+
+html.light {
+  /* Full Light Mode Theme Tokens (Warm White, Crisp Black, Vermillion) */
+  --background: #F8F8F6;
+  --foreground: #0A0A0A;
+  --muted: #EFEFEA;
+  --muted-foreground: #737373;
+  --accent: #FF3D00;
+  --accent-foreground: #FFFFFF;
+  --border: #E5E5DF;
+  --input: #FFFFFF;
+  --card: #FFFFFF;
+  --card-foreground: #0A0A0A;
+  --ring: #FF3D00;
+}
+
+/* 0px Radius Rule: Strict rectangular typography-driven UI */
+*, *::before, *::after {
+  box-sizing: border-box;
+  border-radius: 0px !important;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background-color 200ms ease, color 200ms ease;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle 1.5% Noise Texture */
+.editorial-grain {
+  position: relative;
+}
+
+.editorial-grain::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  opacity: 0.015;
+  z-index: 9999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+/* Accessible focus ring: 2px accent outline */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Typography Utility Classes */
+.font-display {
+  font-family: var(--font-primary);
+  letter-spacing: -0.05em;
+  font-weight: 800;
+}
+
+.font-editorial {
+  font-family: var(--font-editorial);
+}
+
+.font-tech {
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+/* Massive Headline Tight Tracking */
+.tracking-tight-poster {
+  letter-spacing: -0.055em;
+}
+
+.tracking-tech {
+  letter-spacing: 0.04em;
+}
+
+/* Editorial Button System */
+/* Primary: text-based or solid vermillion, animated underline or crisp invert */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: var(--accent);
+  color: #FFFFFF;
+  border: 1px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.625rem 1.25rem;
+  min-height: 44px;
+  cursor: pointer;
+  position: relative;
+  transition: all 180ms ease;
+  user-select: none;
+}
+
+.btn-primary:hover {
+  background-color: transparent;
+  color: var(--accent);
+}
+
+/* Secondary: 1px border, sharp corners, foreground text, hover inversion */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.625rem 1.25rem;
+  min-height: 44px;
+  cursor: pointer;
+  transition: all 180ms ease;
+  user-select: none;
+}
+
+.btn-secondary:hover {
+  background-color: var(--foreground);
+  color: var(--background);
+  border-color: var(--foreground);
+}
+
+/* Ghost: no border, muted text, underline on hover */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: transparent;
+  color: var(--muted-foreground);
+  border: 1px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.5rem 0.875rem;
+  min-height: 44px;
+  cursor: pointer;
+  position: relative;
+  transition: color 180ms ease;
+}
+
+.btn-ghost:hover {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* Text-first button with expanding underline */
+.btn-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background: none;
+  border: none;
+  padding: 0.25rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  cursor: pointer;
+  position: relative;
+}
+
+.btn-text-link::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  height: 2px;
+  background-color: var(--accent);
+  transition: width 200ms ease;
+}
+
+.btn-text-link:hover::after {
+  width: 100%;
+}
+
+/* Editorial Form Inputs */
+.editorial-input {
+  background-color: var(--input);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  padding: 0.625rem 0.875rem;
+  min-height: 44px;
+  width: 100%;
+  transition: border-color 150ms ease;
+}
+
+.editorial-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Editorial Horizontal Dividers */
+.divider-thin {
+  height: 1px;
+  background-color: var(--border);
+  width: 100%;
+}
+
+/* Custom Scrollbar (Minimalist) */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Selection Color */
+::selection {
+  background-color: var(--accent);
+  color: #FFFFFF;
+}
+
+/* Accessibility: Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
