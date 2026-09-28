@@ -16,9 +16,17 @@ function agentApiPlugin(): Plugin {
         }
 
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-        if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
         res.setHeader('Content-Type', 'application/json');
+
+        const rawUrl = req.url || '';
+        const urlPath = rawUrl.split('?')[0].replace(/\/$/, '') || '';
 
         // Collect raw body
         const chunks: Buffer[] = [];
@@ -29,30 +37,37 @@ function agentApiPlugin(): Plugin {
             const rawBuf = Buffer.concat(chunks);
             const bodyStr = rawBuf.toString('utf-8');
             const body = bodyStr ? JSON.parse(bodyStr) : {};
-            const { generateAIStudyPlan, queryAIAssistant } = await import('./server/groqService.ts');
 
-            // ── NEW: Agent endpoint ──────────────────────────────────────
-            if (req.url === '/api/ai/agent') {
+            // ── Agent endpoint ──────────────────────────────────────
+            if (urlPath === '/api/ai/agent') {
               const { runAgent } = await import('./server/agentService.ts');
               const result = await runAgent(body);
+              res.statusCode = 200;
               res.end(JSON.stringify(result));
               return;
             }
 
-            // ── Existing endpoints ───────────────────────────────────────
-            if (req.url === '/api/ai/assistant') {
-              const result = await queryAIAssistant(body);
-              res.end(JSON.stringify(result));
-              return;
-            }
-
-            if (req.url === '/api/ai/study-plan' || req.url === '/api/ai/recommendations') {
+            // ── Study plan & recommendations ─────────────────────────
+            if (urlPath === '/api/ai/study-plan' || urlPath === '/api/ai/recommendations') {
+              const { generateAIStudyPlan } = await import('./server/groqService.ts');
               const result = await generateAIStudyPlan(body);
+              res.statusCode = 200;
               res.end(JSON.stringify(result));
               return;
             }
 
-            if (req.url === '/api/ai/reschedule') {
+            // ── Assistant endpoint ───────────────────────────────────
+            if (urlPath === '/api/ai/assistant') {
+              const { queryAIAssistant } = await import('./server/groqService.ts');
+              const result = await queryAIAssistant(body);
+              res.statusCode = 200;
+              res.end(JSON.stringify(result));
+              return;
+            }
+
+            // ── Reschedule endpoint ──────────────────────────────────
+            if (urlPath === '/api/ai/reschedule') {
+              const { generateAIStudyPlan } = await import('./server/groqService.ts');
               const result = await generateAIStudyPlan({
                 exams: body.upcomingExams || [],
                 subjects: [],
@@ -60,6 +75,7 @@ function agentApiPlugin(): Plugin {
                 dailyHours: body.availableHours || 4,
                 preferences: { deepWork: true, revisionSessions: true, practiceSessions: true, sessionDuration: 45 },
               });
+              res.statusCode = 200;
               res.end(JSON.stringify({
                 recommendations: result.recommendations,
                 rescheduledCount: (body.missedTasks || []).length,
@@ -69,7 +85,7 @@ function agentApiPlugin(): Plugin {
             }
 
             res.statusCode = 404;
-            res.end(JSON.stringify({ error: 'Endpoint not found' }));
+            res.end(JSON.stringify({ error: `Endpoint not found: ${urlPath}` }));
           } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : 'Internal Server Error';
             console.error('[Agent API Error]', errMsg);

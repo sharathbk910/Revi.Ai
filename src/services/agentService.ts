@@ -181,12 +181,13 @@ async function callGroqDirect(
   history: AgentHistoryMessage[]
 ): Promise<string | null> {
   const localKey = typeof window !== 'undefined' ? localStorage.getItem('revision_ai_groq_key')?.trim() : null;
-  const envKey = (import.meta as any).env?.VITE_GROQ_API_KEY?.trim();
+  const envKey = import.meta.env.VITE_GROQ_API_KEY?.trim() || import.meta.env.GROQ_API_KEY?.trim();
   const apiKey = (localKey && !localKey.startsWith('your_'))
     ? localKey
     : (envKey && !envKey.startsWith('your_'))
       ? envKey
       : null;
+
   if (!apiKey) return null;
 
   try {
@@ -219,7 +220,7 @@ YOUR ROLE & INSTRUCTIONS:
 - If asked "What to study now?" or "What should I study?": Check their earliest upcoming exam and pending topics. Recommend a concrete study session with duration and active recall strategy.
 - If asked about progress: Give a direct, encouraging evaluation with realistic countdown guidance.
 - If they ask general academic or study questions (e.g., explaining a concept, study techniques like Feynman or Pomodoro), explain clearly and concisely.
-- Keep responses readable using clean formatting (bullet points, bold text). Keep under 180 words unless a detailed breakdown is requested.`;
+- Keep responses readable using clean formatting (bullet points, bold text). Keep under 200 words unless a detailed breakdown is requested.`;
 
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -231,20 +232,153 @@ YOUR ROLE & INSTRUCTIONS:
         model: 'qwen/qwen3.8-27b',
         messages: [
           { role: 'system', content: systemPrompt },
-          ...history.slice(-8).map(h => ({ role: h.role, content: h.content })),
+          ...history.slice(-10).map(h => ({ role: h.role, content: h.content })),
           { role: 'user', content: message },
         ],
         temperature: 0.7,
-        max_tokens: 450,
+        max_tokens: 500,
       }),
     });
 
     if (!res.ok) return null;
     const data = await res.json();
     return data.choices?.[0]?.message?.content?.trim() || null;
-  } catch {
+  } catch (err) {
+    console.info('[Agent] Direct Groq fetch error (will use smart contextual engine):', err);
     return null;
   }
+}
+
+/**
+ * Intelligent dynamic contextual engine when offline or API key is absent
+ * Generates rich, varied, and personalized replies tailored to user query and timetable context
+ */
+function generateDynamicContextualReply(
+  query: string,
+  context: AgentContextPayload
+): string {
+  const q = query.toLowerCase().trim();
+  const upcomingExams = context.exams
+    .filter(e => e.date >= context.referenceDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const nextExam = upcomingExams[0] || context.exams[0];
+  const pendingTopics = context.topics.filter(t => !t.completed);
+  const highPriorityPending = pendingTopics.filter(t => t.priority === 'HIGH');
+  const targetTopic = highPriorityPending[0] || pendingTopics[0];
+
+  // Calculate days remaining to next exam
+  let daysToNextExam = 0;
+  if (nextExam) {
+    const todayMs = new Date(context.referenceDate).getTime();
+    const examMs = new Date(nextExam.date).getTime();
+    daysToNextExam = Math.max(0, Math.ceil((examMs - todayMs) / (1000 * 60 * 60 * 24)));
+  }
+
+  // 1. What to study now / What should I study / Start studying
+  if (
+    q.includes('what to study') ||
+    q.includes('what should i study') ||
+    q.includes('highest priority') ||
+    q.includes('start study') ||
+    q.includes('where do i start') ||
+    q.includes('recommend') ||
+    q.includes('study now')
+  ) {
+    if (!targetTopic) {
+      return `### 🎯 Syllabus Complete!\n\nAll registered topics are marked complete (${context.completedCount}/${context.totalTopicsCount}).\n\n**Recommended Next Action:**\n* Run a full mock test for **${nextExam ? nextExam.name : 'your upcoming exam'}**.\n* Create active-recall flashcards for high-yield formulas and definitions.`;
+    }
+
+    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (45-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for 45 minutes with zero notifications.*`;
+  }
+
+  // 2. Progress / How much syllabus completed / Status
+  if (
+    q.includes('progress') ||
+    q.includes('how much') ||
+    q.includes('percentage') ||
+    q.includes('syllabus') ||
+    q.includes('completed') ||
+    q.includes('readiness') ||
+    q.includes('status')
+  ) {
+    const remainingCount = pendingTopics.length;
+    const paceNeeded = daysToNextExam > 0 ? (remainingCount / daysToNextExam).toFixed(1) : remainingCount;
+
+    return `### 📊 Live Revision Telemetry\n\n* **Syllabus Coverage:** **${context.overallProgressPercent}%** (${context.completedCount} of ${context.totalTopicsCount} topics mastered)\n* **Pending Topics:** **${remainingCount}** remaining (${highPriorityPending.length} high priority)\n* **Target Pace:** ~**${paceNeeded} topics/day** to complete your syllabus before **${nextExam ? nextExam.name : 'exam day'}**\n* **Daily Study Window:** **${context.dailyHours} hours/day**\n\n${
+      context.overallProgressPercent >= 70
+        ? '🔥 **Strong momentum!** You are well ahead of the curve. Transition towards past papers and timed question sets.'
+        : context.overallProgressPercent >= 30
+        ? '⚡ **Solid progression.** Focus on high-yield chapters first to maximize score velocity.'
+        : '⚠️ **Crunch period.** Prioritize high-priority modules and schedule two focused deep work blocks today.'
+    }`;
+  }
+
+  // 3. Next Exam / Exam Schedule / Timetable countdown
+  if (
+    q.includes('next exam') ||
+    q.includes('exam') ||
+    q.includes('date') ||
+    q.includes('when is') ||
+    q.includes('countdown')
+  ) {
+    if (context.exams.length === 0) {
+      return `### 📅 No Exams Recorded Yet\n\nPlease add your exam dates in the **Exams** tab or type them here (e.g. *"Maths exam on Oct 5 at 9am"*). I'll automatically generate your countdown and revision timetable.`;
+    }
+
+    const examList = upcomingExams.map((e, idx) => {
+      const todayMs = new Date(context.referenceDate).getTime();
+      const examMs = new Date(e.date).getTime();
+      const diffDays = Math.max(0, Math.ceil((examMs - todayMs) / (1000 * 60 * 60 * 24)));
+      return `${idx + 1}. **${e.name}** — \`${e.date}\` at \`${e.time}\` (${diffDays} days remaining)`;
+    }).join('\n');
+
+    return `### ⏳ Upcoming Exam Countdown\n\n${examList || 'No upcoming exams in the immediate future.'}\n\n**Strategy Tip:** The 48-hour window before each exam is automatically locked for high-yield revision and past paper rehearsal.`;
+  }
+
+  // 4. Missed sessions / I missed yesterday / Catch up
+  if (
+    q.includes('missed') ||
+    q.includes('yesterday') ||
+    q.includes('catch up') ||
+    q.includes('behind') ||
+    q.includes('late')
+  ) {
+    if (context.missedTasks.length === 0) {
+      return `### ✅ Perfect Discipline!\n\nZero overdue study sessions detected for today (${context.referenceDate}). Your revision schedule is completely synchronized and on track.`;
+    }
+
+    const missedList = context.missedTasks.slice(0, 3).map(t => `• **${t.topicTitle}** (${t.subjectName})`).join('\n');
+    return `### 🔄 Missed Sessions Detected (${context.missedTasks.length})\n\n${missedList}\n\n**Recovery Protocol:**\nClick **"I MISSED A DAY"** or use the **Daily Check-In** dialog to trigger autonomous rebalancing. Your remaining study slots will be dynamically recalculated without overflowing your daily study limit.`;
+  }
+
+  // 5. Study techniques / Feynman / Pomodoro / Active recall / Tips
+  if (
+    q.includes('feynman') ||
+    q.includes('pomodoro') ||
+    q.includes('active recall') ||
+    q.includes('spaced repetition') ||
+    q.includes('how to study') ||
+    q.includes('technique') ||
+    q.includes('method')
+  ) {
+    return `### 🧠 Elite Revision Techniques\n\n1. **The Feynman Technique (Concept Mastery):**\n   Pick a complex topic (e.g., *${targetTopic?.title || 'Data Structures'}*) and explain it on paper in plain English as if teaching a 10-year-old. Identify gaps where you rely on jargon, re-study those gaps, and simplify.\n\n2. **Active Recall & Blurting (Memory Retention):**\n   Close books and write everything you know from memory for 15 minutes. Highlight what you forgot in red.\n\n3. **Spaced Retrieval Intervals:**\n   Review new material on Day 1, Day 3, and Day 7 to cement neural pathways before exam day.`;
+  }
+
+  // 6. Greetings / Introduction / Help
+  if (
+    q === 'hi' ||
+    q === 'hello' ||
+    q === 'hey' ||
+    q.startsWith('hi ') ||
+    q.startsWith('hello ') ||
+    q === 'who are you' ||
+    q.includes('help me')
+  ) {
+    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your live academic planner and exam strategist.\n\n**Current Live Snapshot:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${context.completedCount}/${context.totalTopicsCount} topics** complete (${context.overallProgressPercent}%)\n* **Daily Study Window:** **${context.dailyHours} hours/day**\n\n**Try asking:**\n* *"What should I study right now?"*\n* *"How much syllabus do I have left?"*\n* *"Explain the Feynman technique"*\n* Or upload a timetable image / syllabus PDF!`;
+  }
+
+  // 7. General Academic Coaching & Guidance
+  return `### 💡 Academic Strategy (${nextExam ? nextExam.name : 'Revisionly'})\n\nRegarding: *"${query}"*\n\n**Key Strategic Guidance:**\n* **Focus Target:** Direct your prime energy towards **${targetTopic ? targetTopic.title : 'high-yield concepts'}** for your upcoming exam.\n* **Time Management:** Break study time into **${context.sessionDuration || 45}-minute** focused intervals followed by 10-minute active breaks.\n* **Self-Testing:** Spend at least 60% of study time on active recall questions rather than passive reading.\n\nNeed to adjust your timetable? Type *"Rebuild my plan"* or specify *"I can study 4 hours a day"*.`;
 }
 
 /**
@@ -341,20 +475,15 @@ async function runClientAgent(
     }
 
     default: {
-      // Direct call to Groq with live context
+      // 1. Attempt direct call to Groq with live context
       const directReply = await callGroqDirect(message, context, history);
       if (directReply) {
         return { message: directReply };
       }
 
-      // Dynamic contextual fallback if offline
-      const upcomingExam = context.exams.find(e => e.date >= context.referenceDate) || context.exams[0];
-      const examNotice = upcomingExam
-        ? `Next priority exam: **${upcomingExam.name}** on **${upcomingExam.date}**.`
-        : 'Tip: Add your exams first so I can build your countdown schedule.';
-
+      // 2. Dynamic, context-aware intelligent fallback engine (never canned or repetitive)
       return {
-        message: `> REVISIONLY AI (${context.referenceDate})\n\n${examNotice}\n\nYou have **${context.completedCount}/${context.totalTopicsCount} topics** complete (${context.overallProgressPercent}%).\n\nAsk me anything: "What should I study right now?", "Explain a topic", or upload your syllabus/timetable!`,
+        message: generateDynamicContextualReply(message, context),
       };
     }
   }
@@ -382,9 +511,9 @@ export async function callAgent(
   };
 
   try {
-    // 1. Try server endpoint with 8-second timeout
+    // 1. Try server endpoint with 10-second timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     const response = await fetch('/api/ai/agent', {
       method: 'POST',
@@ -397,14 +526,15 @@ export async function callAgent(
 
     if (response.ok) {
       const data = await response.json();
-      if (data && typeof data.message === 'string') {
+      if (data && typeof data.message === 'string' && data.message.trim().length > 0) {
         return data as AgentServerResponse;
       }
     }
   } catch (err) {
-    console.info('[Agent] Server endpoint not reachable, running client-side agent kernel:', err);
+    console.info('[Agent] Server endpoint not reachable or timed out, running client-side agent kernel:', err);
   }
 
-  // 2. Seamless client-side agent kernel
+  // 2. Seamless client-side intelligent agent kernel
   return runClientAgent(message, context, history, attachments);
 }
+

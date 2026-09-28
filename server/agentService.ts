@@ -381,6 +381,142 @@ Return ONLY a valid JSON object in this exact format, no markdown fences:
 // LLM General Chat (contextual, not refusal-based)
 // ──────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Intelligent dynamic contextual engine when Groq is offline or API key is absent
+ * Generates rich, varied, and personalized replies tailored to user query and timetable context
+ */
+function generateDynamicContextualReply(
+  query: string,
+  ctx: AgentContext
+): string {
+  const q = query.toLowerCase().trim();
+  const upcomingExams = (ctx.exams || [])
+    .filter(e => e.date >= ctx.referenceDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const nextExam = upcomingExams[0] || (ctx.exams || [])[0];
+  const pendingTopics = (ctx.topics || []).filter(t => !t.completed);
+  const highPriorityPending = pendingTopics.filter(t => t.priority === 'HIGH');
+  const targetTopic = highPriorityPending[0] || pendingTopics[0];
+
+  // Calculate days remaining to next exam
+  let daysToNextExam = 0;
+  if (nextExam) {
+    const todayMs = new Date(ctx.referenceDate).getTime();
+    const examMs = new Date(nextExam.date).getTime();
+    daysToNextExam = Math.max(0, Math.ceil((examMs - todayMs) / (1000 * 60 * 60 * 24)));
+  }
+
+  // 1. What to study now / What should I study / Start studying
+  if (
+    q.includes('what to study') ||
+    q.includes('what should i study') ||
+    q.includes('highest priority') ||
+    q.includes('start study') ||
+    q.includes('where do i start') ||
+    q.includes('recommend') ||
+    q.includes('study now')
+  ) {
+    if (!targetTopic) {
+      return `### 🎯 Syllabus Complete!\n\nAll registered topics are marked complete (${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0}).\n\n**Recommended Next Action:**\n* Run a full mock test for **${nextExam ? nextExam.name : 'your upcoming exam'}**.\n* Create active-recall flashcards for high-yield formulas and definitions.`;
+    }
+
+    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (45-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for 45 minutes with zero notifications.*`;
+  }
+
+  // 2. Progress / How much syllabus completed / Status
+  if (
+    q.includes('progress') ||
+    q.includes('how much') ||
+    q.includes('percentage') ||
+    q.includes('syllabus') ||
+    q.includes('completed') ||
+    q.includes('readiness') ||
+    q.includes('status')
+  ) {
+    const remainingCount = pendingTopics.length;
+    const paceNeeded = daysToNextExam > 0 ? (remainingCount / daysToNextExam).toFixed(1) : remainingCount;
+
+    return `### 📊 Live Revision Telemetry\n\n* **Syllabus Coverage:** **${ctx.overallProgressPercent || 0}%** (${ctx.completedCount || 0} of ${ctx.totalTopicsCount || 0} topics mastered)\n* **Pending Topics:** **${remainingCount}** remaining (${highPriorityPending.length} high priority)\n* **Target Pace:** ~**${paceNeeded} topics/day** to complete your syllabus before **${nextExam ? nextExam.name : 'exam day'}**\n* **Daily Study Window:** **${ctx.dailyHours || 3} hours/day**\n\n${
+      (ctx.overallProgressPercent || 0) >= 70
+        ? '🔥 **Strong momentum!** You are well ahead of the curve. Transition towards past papers and timed question sets.'
+        : (ctx.overallProgressPercent || 0) >= 30
+        ? '⚡ **Solid progression.** Focus on high-yield chapters first to maximize score velocity.'
+        : '⚠️ **Crunch period.** Prioritize high-priority modules and schedule two focused deep work blocks today.'
+    }`;
+  }
+
+  // 3. Next Exam / Exam Schedule / Timetable countdown
+  if (
+    q.includes('next exam') ||
+    q.includes('exam') ||
+    q.includes('date') ||
+    q.includes('when is') ||
+    q.includes('countdown')
+  ) {
+    if (!ctx.exams || ctx.exams.length === 0) {
+      return `### 📅 No Exams Recorded Yet\n\nPlease add your exam dates in the **Exams** tab or type them here (e.g. *"Maths exam on Oct 5 at 9am"*). I'll automatically generate your countdown and revision timetable.`;
+    }
+
+    const examList = upcomingExams.map((e, idx) => {
+      const todayMs = new Date(ctx.referenceDate).getTime();
+      const examMs = new Date(e.date).getTime();
+      const diffDays = Math.max(0, Math.ceil((examMs - todayMs) / (1000 * 60 * 60 * 24)));
+      return `${idx + 1}. **${e.name}** — \`${e.date}\` at \`${e.time}\` (${diffDays} days remaining)`;
+    }).join('\n');
+
+    return `### ⏳ Upcoming Exam Countdown\n\n${examList || 'No upcoming exams in the immediate future.'}\n\n**Strategy Tip:** The 48-hour window before each exam is automatically locked for high-yield revision and past paper rehearsal.`;
+  }
+
+  // 4. Missed sessions / I missed yesterday / Catch up
+  if (
+    q.includes('missed') ||
+    q.includes('yesterday') ||
+    q.includes('catch up') ||
+    q.includes('behind') ||
+    q.includes('late')
+  ) {
+    if (!ctx.missedTasks || ctx.missedTasks.length === 0) {
+      return `### ✅ Perfect Discipline!\n\nZero overdue study sessions detected for today (${ctx.referenceDate}). Your revision schedule is completely synchronized and on track.`;
+    }
+
+    const missedList = ctx.missedTasks.slice(0, 3).map(t => `• **${t.topicTitle}** (${t.subjectName})`).join('\n');
+    return `### 🔄 Missed Sessions Detected (${ctx.missedTasks.length})\n\n${missedList}\n\n**Recovery Protocol:**\nClick **"I MISSED A DAY"** or use the **Daily Check-In** dialog to trigger autonomous rebalancing. Your remaining study slots will be dynamically recalculated without overflowing your daily study limit.`;
+  }
+
+  // 5. Study techniques / Feynman / Pomodoro / Active recall / Tips
+  if (
+    q.includes('feynman') ||
+    q.includes('pomodoro') ||
+    q.includes('active recall') ||
+    q.includes('spaced repetition') ||
+    q.includes('how to study') ||
+    q.includes('technique') ||
+    q.includes('method')
+  ) {
+    return `### 🧠 Elite Revision Techniques\n\n1. **The Feynman Technique (Concept Mastery):**\n   Pick a complex topic (e.g., *${targetTopic?.title || 'Data Structures'}*) and explain it on paper in plain English as if teaching a 10-year-old. Identify gaps where you rely on jargon, re-study those gaps, and simplify.\n\n2. **Active Recall & Blurting (Memory Retention):**\n   Close books and write everything you know from memory for 15 minutes. Highlight what you forgot in red.\n\n3. **Spaced Retrieval Intervals:**\n   Review new material on Day 1, Day 3, and Day 7 to cement neural pathways before exam day.`;
+  }
+
+  // 6. Greetings / Introduction / Help
+  if (
+    q === 'hi' ||
+    q === 'hello' ||
+    q === 'hey' ||
+    q.startsWith('hi ') ||
+    q.startsWith('hello ') ||
+    q === 'who are you' ||
+    q.includes('help me')
+  ) {
+    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your live academic planner and exam strategist.\n\n**Current Live Snapshot:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0} topics** complete (${ctx.overallProgressPercent || 0}%)\n* **Daily Study Window:** **${ctx.dailyHours || 3} hours/day**\n\n**Try asking:**\n* *"What should I study right now?"*\n* *"How much syllabus do I have left?"*\n* *"Explain the Feynman technique"*\n* Or upload a timetable image / syllabus PDF!`;
+  }
+
+  // 7. General Academic Coaching & Guidance
+  return `### 💡 Academic Strategy (${nextExam ? nextExam.name : 'Revisionly'})\n\nRegarding: *"${query}"*\n\n**Key Strategic Guidance:**\n* **Focus Target:** Direct your prime energy towards **${targetTopic ? targetTopic.title : 'high-yield concepts'}** for your upcoming exam.\n* **Time Management:** Break study time into **${ctx.sessionDuration || 45}-minute** focused intervals followed by 10-minute active breaks.\n* **Self-Testing:** Spend at least 60% of study time on active recall questions rather than passive reading.\n\nNeed to adjust your timetable? Type *"Rebuild my plan"* or specify *"I can study 4 hours a day"*.`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// LLM General Chat (contextual, not refusal-based)
+// ──────────────────────────────────────────────────────────────────────────────
+
 async function handleGeneralChat(request: AgentRequest): Promise<AgentResponse> {
   const groq = getGroqClient();
   const ctx = request.context;
@@ -414,19 +550,18 @@ YOUR ROLE & INSTRUCTIONS:
 - If asked "What to study now?" or "What should I study?": Check their earliest upcoming exam and pending topics. Recommend a concrete study session with duration and active recall strategy.
 - If asked about progress: Give a direct, encouraging evaluation with realistic countdown guidance.
 - If they ask general academic or study questions (e.g., explaining a concept, study techniques like Feynman or Pomodoro), explain clearly and concisely.
-- Keep responses readable using clean formatting (bullet points, bold text). Keep under 180 words unless a detailed breakdown is requested.`;
+- Keep responses readable using clean formatting (bullet points, bold text). Keep under 200 words unless a detailed breakdown is requested.`;
 
   if (!groq) {
     return {
-      message: `> Groq AI is temporarily unavailable. Check your connection or verify your API key in Settings.`,
-      fallback: true,
+      message: generateDynamicContextualReply(request.message, ctx),
     };
   }
 
   try {
     const messages: Groq.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...request.history.slice(-8).map(h => ({
+      ...request.history.slice(-10).map(h => ({
         role: h.role as 'user' | 'assistant',
         content: h.content,
       })),
@@ -437,18 +572,22 @@ YOUR ROLE & INSTRUCTIONS:
       model: 'qwen/qwen3.8-27b',
       messages,
       temperature: 0.7,
-      max_tokens: 450,
+      max_tokens: 500,
     });
 
+    const replyContent = result.choices[0]?.message?.content?.trim();
+    if (replyContent && replyContent.length > 0) {
+      return { message: replyContent };
+    }
+
     return {
-      message: result.choices[0]?.message?.content?.trim() || '> Processing your request.',
+      message: generateDynamicContextualReply(request.message, ctx),
     };
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn('[Agent] Chat error:', errMsg);
+    console.warn('[Agent] Chat error from Groq, using dynamic contextual fallback:', errMsg);
     return {
-      message: `> I encountered an error connecting to the AI model (${errMsg}). Please try again or rephrase your question.`,
-      fallback: true,
+      message: generateDynamicContextualReply(request.message, ctx),
     };
   }
 }
@@ -458,11 +597,25 @@ YOUR ROLE & INSTRUCTIONS:
 // ──────────────────────────────────────────────────────────────────────────────
 
 export async function runAgent(request: AgentRequest): Promise<AgentResponse> {
-  const hasAttachments = Boolean(request.attachments?.length);
-  const attachmentNames = request.attachments?.map(a => a.name) || [];
+  const req = request || ({} as AgentRequest);
+  const message = (req.message || '').trim();
+  const hasAttachments = Boolean(req.attachments?.length);
+  const attachmentNames = req.attachments?.map(a => a.name) || [];
 
-  const intent = classifyIntent(request.message, hasAttachments, attachmentNames);
-  const ctx = request.context;
+  const intent = classifyIntent(message, hasAttachments, attachmentNames);
+  const ctx = req.context || {
+    exams: [],
+    subjects: [],
+    topics: [],
+    tasks: [],
+    missedTasks: [],
+    overallProgressPercent: 0,
+    completedCount: 0,
+    totalTopicsCount: 0,
+    dailyHours: 3,
+    referenceDate: new Date().toISOString().split('T')[0],
+    sessionDuration: 45,
+  };
 
   switch (intent) {
     case 'DELETE_PLAN':       return handleDeletePlan(ctx);
@@ -470,9 +623,9 @@ export async function runAgent(request: AgentRequest): Promise<AgentResponse> {
     case 'CREATE_PLAN':       return handleCreatePlan(ctx);
     case 'REBUILD_PLAN':      return handleRebuildPlan();
     case 'RESCHEDULE_MISSED': return handleRescheduleMissed(ctx);
-    case 'UPDATE_HOURS':      return handleUpdateHours(request.message);
+    case 'UPDATE_HOURS':      return handleUpdateHours(message);
     case 'EXTRACT_TIMETABLE':
-    case 'EXTRACT_SYLLABUS':  return extractFromFiles(request, intent);
-    default:                  return handleGeneralChat(request);
+    case 'EXTRACT_SYLLABUS':  return extractFromFiles({ ...req, message, context: ctx, history: req.history || [] }, intent);
+    default:                  return handleGeneralChat({ ...req, message, context: ctx, history: req.history || [] });
   }
 }

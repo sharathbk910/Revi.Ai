@@ -451,7 +451,7 @@ export const SettingsView: React.FC = () => {
           </div>
           <span className="font-mono text-[11px] text-[var(--accent)] font-semibold uppercase flex items-center gap-1.5">
             <Key className="w-3.5 h-3.5" />
-            {groqKey || (import.meta as any).env?.VITE_GROQ_API_KEY ? 'CONFIGURED' : 'NOT SET'}
+            {groqKey || import.meta.env.VITE_GROQ_API_KEY || import.meta.env.GROQ_API_KEY ? 'CONFIGURED' : 'NOT SET'}
           </span>
         </div>
 
