@@ -83,38 +83,57 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
   return (
     <div className="space-y-16 sm:space-y-24">
-      {/* Demo Notification Bar */}
-      <section className="border-b border-[var(--border)] bg-[var(--muted)]/40 py-3 px-4 sm:px-6">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
-          <div className="flex items-center gap-2 text-[var(--foreground)]">
-            <span className="w-1.5 h-1.5 bg-[var(--accent)]" />
-            <span className="font-bold text-[var(--accent)]">DEMO DATA</span>
-            <span className="text-[var(--muted-foreground)]">/</span>
-            <span>NxtWave semester example loaded ({exams.length} exams &amp; complete syllabus)</span>
+      {/* State bar — only shown when relevant */}
+      {exams.length === 0 && (
+        <section className="border-b border-[var(--border)] bg-[var(--muted)]/40 py-3 px-4 sm:px-6">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex items-center gap-2 text-[var(--muted-foreground)]">
+              <span className="w-1.5 h-1.5 bg-[var(--muted-foreground)]" />
+              <span>YOUR STUDY SYSTEM IS EMPTY</span>
+              <span className="text-[var(--muted-foreground)]">/</span>
+              <span>Add your exam timetable and syllabus to generate your first plan.</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onStartPlanning}
+                className="px-2.5 py-1 text-xs font-mono border border-[var(--accent)] bg-[var(--accent)] text-white hover:opacity-90 transition-opacity"
+              >
+                BUILD MY STUDY PLAN
+              </button>
+              <button
+                onClick={resetDemoData}
+                className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)] transition-colors"
+              >
+                LOAD NXTWAVE SAMPLE
+              </button>
+            </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onExploreDemo}
-              className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] bg-[var(--card)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
-            >
-              EXPLORE DEMO
-            </button>
-            <button
-              onClick={clearAllData}
-              className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)] transition-colors"
-            >
-              CLEAR DEMO
-            </button>
-            <button
-              onClick={resetDemoData}
-              className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--accent)] transition-colors"
-            >
-              RESET DEMO
-            </button>
+        </section>
+      )}
+      {exams.length > 0 && (
+        <section className="border-b border-[var(--border)] bg-[var(--muted)]/40 py-3 px-4 sm:px-6">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex items-center gap-2 text-[var(--foreground)]">
+              <span className="w-1.5 h-1.5 bg-emerald-500" />
+              <span>{exams.length} exam{exams.length !== 1 ? 's' : ''} loaded</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onExploreDemo}
+                className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] bg-[var(--card)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+              >
+                OPEN DASHBOARD
+              </button>
+              <button
+                onClick={clearAllData}
+                className="px-2.5 py-1 text-xs font-mono border border-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:border-[var(--foreground)] transition-colors"
+              >
+                CLEAR DATA
+              </button>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* HERO SECTION */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

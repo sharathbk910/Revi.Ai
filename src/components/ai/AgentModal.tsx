@@ -57,9 +57,9 @@ type AgentStatus = 'idle' | 'thinking' | 'executing' | 'error';
 
 const STATUS_LABELS: Record<AgentStatus, string> = {
   idle: 'READY',
-  thinking: 'ANALYZING...',
+  thinking: 'LOADING...',
   executing: 'EXECUTING...',
-  error: 'ERROR',
+  error: 'ERROR — REQUEST FAILED',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,17 +297,38 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
   const [status, setStatus] = useState<AgentStatus>('idle');
   const [history, setHistory] = useState<AgentHistoryMessage[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const modalId = useId();
 
   // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Show contextual welcome message on first open
+  useEffect(() => {
+    if (isOpen && messages.length === 0) {
+      const ctx = buildContext();
+      const hasData = ctx.exams.length > 0 || ctx.topics.length > 0;
+      const welcomeText = hasData
+        ? `> REVISIONLY AI ACTIVE\n\nConnected to your data:\n- **${ctx.exams.length} exam(s)** scheduled\n- **${ctx.topics.length} topic(s)** in syllabus (${ctx.completedCount} completed)\n- **${ctx.dailyHours}h/day** study capacity\n\nType a command or upload a file.`
+        : `> REVISIONLY AI ACTIVE\n\nYour study system is currently empty.\n\nYou can:\n- Type your exam dates (e.g., "Python exam on Oct 3 at 9am")\n- Upload a timetable image or PDF\n- Upload your syllabus document\n\nI'll extract the data and create your plan.`;
+
+      setMessages([{
+        id: 'welcome',
+        type: 'agent',
+        content: welcomeText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Focus input when opened
   useEffect(() => {
@@ -483,6 +504,17 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
     }
   }, []);
 
+  // ── Cancel in-flight request ─────────────────────────────────────────────
+
+  const handleCancel = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setStatus('idle');
+    addMessage({ type: 'system', content: '> REQUEST.CANCELLED\n\nCancelled by user.' });
+  }, []);
+
   // ── Submit message ───────────────────────────────────────────────────────
 
   const handleSubmit = useCallback(async (messageText?: string) => {
@@ -490,21 +522,35 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
     if (!text && attachments.length === 0) return;
     if (status === 'thinking' || status === 'executing') return;
 
+    const currentAttachments = [...attachments];
+    const userHistoryEntry: AgentHistoryMessage = { role: 'user', content: text };
+
     // Add user message
     addMessage({
       type: 'user',
-      content: text || (attachments.length > 0 ? `[${attachments.length} file(s) attached]` : ''),
-      attachments: attachments.length > 0 ? [...attachments] : undefined,
+      content: text || (currentAttachments.length > 0 ? `[${currentAttachments.length} file(s) attached]` : ''),
+      attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
     });
 
-    const userHistoryEntry: AgentHistoryMessage = { role: 'user', content: text };
     setInputText('');
     setAttachments([]);
     setStatus('thinking');
+    setLastFailedMessage(null);
+
+    // Setup abort + timeout
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
     try {
-      const response = await callAgent(text, buildContext(), history, attachments.length > 0 ? attachments : undefined);
+      const response = await callAgent(
+        text,
+        buildContext(),
+        history,
+        currentAttachments.length > 0 ? currentAttachments : undefined
+      );
 
+      clearTimeout(timeoutId);
       setHistory(prev => [...prev, userHistoryEntry]);
 
       if (response.requiresConfirmation && response.tool) {
@@ -519,11 +565,8 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         });
         setHistory(prev => [...prev, { role: 'assistant', content: response.message }]);
       } else if (response.tool && !response.requiresConfirmation) {
-        // Safe auto-execute (non-destructive)
         addMessage({ type: 'agent', content: response.message });
         setHistory(prev => [...prev, { role: 'assistant', content: response.message }]);
-
-        // Execute after a brief moment
         setTimeout(async () => {
           setStatus('executing');
           try {
@@ -536,19 +579,37 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
             setStatus('idle');
           }
         }, 200);
+        return; // status set inside setTimeout
       } else {
-        addMessage({ type: 'agent', content: response.message, extractedExams: response.extractedExams, extractedTopics: response.extractedTopics });
+        addMessage({
+          type: 'agent',
+          content: response.message,
+          extractedExams: response.extractedExams,
+          extractedTopics: response.extractedTopics,
+        });
         setHistory(prev => [...prev, { role: 'assistant', content: response.message }]);
-        if (response.fallback) setStatus('idle');
       }
     } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const isAborted = (err instanceof Error && (err.name === 'AbortError' || err.message.includes('abort')));
+      if (isAborted) {
+        // Already handled in handleCancel
+        return;
+      }
+      setStatus('error');
+      setLastFailedMessage(text);
       addMessage({
-        type: 'agent',
-        content: `> CONNECTION ERROR\n\nI couldn't reach the server. Check that the dev server is running.\n\nYou can still use quick actions below.`,
+        type: 'system',
+        content: `> AI.UNAVAILABLE\n\nRevisionly AI couldn't complete that request.\n\nPossible causes:\n- Server not running (dev: npm run dev)\n- No GROQ_API_KEY in .env\n- Network timeout\n\nYour study planner continues to work normally.`,
       });
+      setTimeout(() => setStatus('idle'), 2000);
+      return;
     } finally {
-      setStatus('idle');
+      clearTimeout(timeoutId);
+      abortControllerRef.current = null;
     }
+
+    setStatus('idle');
   }, [inputText, attachments, status, history, buildContext, executeTool]);
 
   // ── Drag and drop ────────────────────────────────────────────────────────
@@ -760,9 +821,36 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
 
           {/* Status indicator */}
           {isbusy && (
-            <div className="flex items-center gap-2 font-mono text-[10px] text-[var(--accent)]">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {status === 'thinking' ? 'ANALYZING REQUEST...' : 'EXECUTING ACTION...'}
+            <div className="flex items-center justify-between font-mono text-[10px] text-[var(--accent)]">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {status === 'thinking' ? 'ANALYZING REQUEST...' : 'EXECUTING ACTION...'}
+              </div>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="text-[9px] uppercase tracking-wider underline hover:text-[var(--foreground)] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Last failed message retry */}
+          {lastFailedMessage && !isbusy && (
+            <div className="flex items-center justify-between font-mono text-[10px] bg-red-500/10 border border-red-500/30 px-3 py-2 text-red-400">
+              <span>Request failed to complete.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const retryText = lastFailedMessage;
+                  setLastFailedMessage(null);
+                  handleSubmit(retryText);
+                }}
+                className="underline uppercase tracking-wider hover:text-red-200 transition-colors cursor-pointer"
+              >
+                Retry
+              </button>
             </div>
           )}
 

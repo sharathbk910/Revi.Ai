@@ -91,7 +91,22 @@ export interface PlannerContextType {
 
 const PlannerContext = createContext<PlannerContextType | undefined>(undefined);
 
-const STORAGE_KEY = 'revisionly_state_v2';
+const STORAGE_KEY = 'revisionly_state_v3'; // bumped to v3: empty default state
+
+// Default empty state — no demo data auto-loaded
+const EMPTY_AVAILABILITY: Availability = {
+  dailyHours: 3,
+  slots: { morning: true, afternoon: false, evening: true, night: false },
+};
+const EMPTY_PREFERENCES: Preferences = {
+  sessionDuration: 45,
+  shortSessions: false,
+  deepWork: true,
+  practiceSessions: true,
+  revisionSessions: true,
+  autoRescheduling: true,
+  lightDays: ['Sunday'],
+};
 
 export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Auth state
@@ -100,49 +115,49 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isDemoImporting, setIsDemoImporting] = useState(false);
   const isSupabaseOnline = isSupabaseConfigured();
 
-  // Core domain state
+  // Core domain state — default to EMPTY (not demo)
   const [exams, setExams] = useState<Exam[]>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_exams`);
-      return saved ? JSON.parse(saved) : DEMO_EXAMS;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return DEMO_EXAMS;
+      return [];
     }
   });
 
   const [subjects, setSubjects] = useState<Subject[]>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_subjects`);
-      return saved ? JSON.parse(saved) : DEMO_SUBJECTS;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return DEMO_SUBJECTS;
+      return [];
     }
   });
 
   const [topics, setTopics] = useState<Topic[]>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_topics`);
-      return saved ? JSON.parse(saved) : DEMO_TOPICS;
+      return saved ? JSON.parse(saved) : [];
     } catch {
-      return DEMO_TOPICS;
+      return [];
     }
   });
 
   const [availability, setAvailability] = useState<Availability>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_availability`);
-      return saved ? JSON.parse(saved) : DEMO_AVAILABILITY;
+      return saved ? JSON.parse(saved) : EMPTY_AVAILABILITY;
     } catch {
-      return DEMO_AVAILABILITY;
+      return EMPTY_AVAILABILITY;
     }
   });
 
   const [preferences, setPreferences] = useState<Preferences>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_preferences`);
-      return saved ? JSON.parse(saved) : DEMO_PREFERENCES;
+      return saved ? JSON.parse(saved) : EMPTY_PREFERENCES;
     } catch {
-      return DEMO_PREFERENCES;
+      return EMPTY_PREFERENCES;
     }
   });
 
@@ -605,17 +620,17 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
     recalculateSchedule();
   }, [availability, preferences, user, isSupabaseOnline, addToast, recalculateSchedule]);
 
-  // Demo Reset & Demo Import
+  // Load NxtWave demo data (EXPLICIT user action only — never auto-called)
   const resetDemoData = useCallback(() => {
     setExams(DEMO_EXAMS);
     setSubjects(DEMO_SUBJECTS);
-    setTopics(DEMO_TOPICS);
+    setTopics(DEMO_TOPICS.map(t => ({ ...t, completed: false, completedAt: undefined })));
     setAvailability(DEMO_AVAILABILITY);
     setPreferences(DEMO_PREFERENCES);
-    setReferenceDateState('2026-09-28');
+    setReferenceDateState(new Date().toISOString().split('T')[0]);
     setDismissedCheckInDate('');
     runScheduler(DEMO_TOPICS, DEMO_EXAMS, DEMO_AVAILABILITY, DEMO_PREFERENCES, []);
-    addToast('SYSTEM', '> DEMO.RESET', 'NxtWave semester timetable and full syllabus restored.');
+    addToast('SYSTEM', '> DEMO.LOADED', 'NxtWave semester data loaded. All topics start at 0% — fully editable.');
   }, [runScheduler, addToast]);
 
   // Dedicated "IMPORT NXTWAVE DEMO" action for authenticated users or local demo
