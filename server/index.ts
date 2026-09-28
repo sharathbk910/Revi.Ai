@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { generateAIStudyPlan, queryAIAssistant, AIPlanRequest, AIAssistantRequest } from './groqService.js';
+import { runAgent } from './agentService.js';
 
 dotenv.config();
 
@@ -19,6 +20,17 @@ app.get('/api/health', (_req: Request, res: Response) => {
     groqConfigured: !!process.env.GROQ_API_KEY && !process.env.GROQ_API_KEY.startsWith('your_'),
     timestamp: new Date().toISOString(),
   });
+});
+
+// POST /api/ai/agent
+app.post('/api/ai/agent', async (req: Request, res: Response) => {
+  try {
+    const result = await runAgent(req.body || {});
+    res.json(result);
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown server error';
+    res.status(500).json({ error: errorMsg, fallback: true });
+  }
 });
 
 // POST /api/ai/study-plan
