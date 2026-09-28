@@ -10,6 +10,8 @@ import {
   Globe,
   Download,
   Check,
+  Bot,
+  Key,
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
@@ -48,6 +50,22 @@ export const SettingsView: React.FC = () => {
   const [timezone, setTimezone] = useState('Asia/Kolkata');
   const [notifications, setNotifications] = useState(true);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [groqKey, setGroqKey] = useState(() => {
+    return (typeof window !== 'undefined' ? localStorage.getItem('revision_ai_groq_key') : '') || '';
+  });
+  const [groqKeySaved, setGroqKeySaved] = useState(false);
+
+  const handleSaveGroqKey = () => {
+    if (typeof window !== 'undefined') {
+      if (groqKey.trim()) {
+        localStorage.setItem('revision_ai_groq_key', groqKey.trim());
+      } else {
+        localStorage.removeItem('revision_ai_groq_key');
+      }
+      setGroqKeySaved(true);
+      setTimeout(() => setGroqKeySaved(false), 2500);
+    }
+  };
 
   const handleSaveSettings = async () => {
     await updateAvailability({
@@ -422,7 +440,51 @@ export const SettingsView: React.FC = () => {
         </div>
       </section>
 
-      {/* 6. DATA MANAGEMENT & EXPORT */}
+      {/* 6. AI ENGINE CONFIGURATION */}
+      <section className="border border-[var(--border)] bg-[var(--card)] p-6 sm:p-8 space-y-6">
+        <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+          <div className="flex items-center gap-3">
+            <Bot className="w-4 h-4 text-[var(--accent)]" />
+            <h2 className="font-display text-lg sm:text-xl text-[var(--foreground)] tracking-tight uppercase">
+              AI ENGINE CONFIGURATION (GROQ LLM)
+            </h2>
+          </div>
+          <span className="font-mono text-[11px] text-[var(--accent)] font-semibold uppercase flex items-center gap-1.5">
+            <Key className="w-3.5 h-3.5" />
+            {groqKey || (import.meta as any).env?.VITE_GROQ_API_KEY ? 'CONFIGURED' : 'NOT SET'}
+          </span>
+        </div>
+
+        <div className="space-y-4 font-mono text-xs">
+          <div>
+            <label className="block text-[var(--muted-foreground)] text-[10px] uppercase mb-1">
+              Custom Groq API Key (Optional Override)
+            </label>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="password"
+                placeholder="gsk_..."
+                value={groqKey}
+                onChange={e => setGroqKey(e.target.value)}
+                className="editorial-input text-xs flex-1"
+              />
+              <button
+                type="button"
+                onClick={handleSaveGroqKey}
+                className="btn-primary text-xs py-2 px-4 whitespace-nowrap"
+              >
+                {groqKeySaved ? 'Saved!' : 'Save Key'}
+              </button>
+            </div>
+            <p className="text-[var(--muted-foreground)] text-[11px] mt-2">
+              Revisionly uses Groq (Qwen / Llama) for ultra-fast, tailored academic coaching and dynamic syllabus extraction.
+              If not specified here, it automatically uses the server-configured environment key.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 7. DATA MANAGEMENT & EXPORT */}
       <section className="border border-[var(--border)] bg-[var(--card)] p-6 sm:p-8 space-y-6">
         <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
           <div className="flex items-center gap-3">

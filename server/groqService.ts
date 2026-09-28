@@ -6,7 +6,7 @@ dotenv.config();
 
 // Lazily initialize Groq client only if GROQ_API_KEY is configured
 function getGroqClient(): Groq | null {
-  const apiKey = process.env.GROQ_API_KEY?.trim();
+  const apiKey = process.env.GROQ_API_KEY?.trim() || process.env.VITE_GROQ_API_KEY?.trim();
   if (!apiKey || apiKey === '' || apiKey.startsWith('your_')) {
     return null;
   }

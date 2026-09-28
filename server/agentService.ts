@@ -19,7 +19,7 @@ function getGeminiClient(): GoogleGenAI | null {
 }
 
 function getGroqClient(): Groq | null {
-  const key = process.env.GROQ_API_KEY;
+  const key = process.env.GROQ_API_KEY?.trim() || process.env.VITE_GROQ_API_KEY?.trim();
   if (!key || key.startsWith('your_')) return null;
   try {
     return new Groq({ apiKey: key });
@@ -77,10 +77,6 @@ export interface AgentResponse {
   fallback?: boolean;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Intent Classification (deterministic layer, no LLM needed)
-// ──────────────────────────────────────────────────────────────────────────────
-
 type IntentType =
   | 'DELETE_PLAN'
   | 'CLEAR_ALL_DATA'
@@ -88,16 +84,6 @@ type IntentType =
   | 'REBUILD_PLAN'
   | 'RESCHEDULE_MISSED'
   | 'UPDATE_HOURS'
-  | 'UPDATE_PREFERENCES'
-  | 'ADD_EXAM'
-  | 'UPDATE_EXAM'
-  | 'DELETE_EXAM'
-  | 'ADD_TOPIC'
-  | 'DELETE_TOPIC'
-  | 'MARK_COMPLETE'
-  | 'QUERY_PLAN'
-  | 'QUERY_PROGRESS'
-  | 'QUERY_NEXT_EXAM'
   | 'EXTRACT_TIMETABLE'
   | 'EXTRACT_SYLLABUS'
   | 'GENERAL_CHAT';
@@ -112,93 +98,47 @@ function classifyIntent(message: string, hasAttachments: boolean, attachmentName
     if (names.includes('syllabus') || names.includes('curriculum')) return 'EXTRACT_SYLLABUS';
     if (m.includes('timetable') || m.includes('exam') || m.includes('schedule')) return 'EXTRACT_TIMETABLE';
     if (m.includes('syllabus') || m.includes('topic') || m.includes('chapter') || m.includes('module')) return 'EXTRACT_SYLLABUS';
-    return 'EXTRACT_TIMETABLE'; // default for file upload
+    return 'EXTRACT_TIMETABLE';
   }
 
-  // Delete plan
-  if ((m.includes('delete') || m.includes('clear') || m.includes('remove') || m.includes('wipe')) && 
-      (m.includes('plan') || m.includes('schedule') || m.includes('session') || m.includes('timetable'))) {
+  // Explicit tool execution commands
+  if (
+    m === 'delete my plan' || m === 'delete plan' ||
+    m === 'clear my plan' || m === 'clear plan' ||
+    m === 'wipe plan' || m === 'clear my schedule' || m === 'delete my schedule'
+  ) {
     return 'DELETE_PLAN';
   }
 
-  // Clear everything
-  if ((m.includes('delete') || m.includes('clear') || m.includes('remove') || m.includes('wipe')) && 
-      (m.includes('all') || m.includes('everything'))) {
+  if (
+    m === 'clear all data' || m === 'delete all data' ||
+    m === 'delete everything' || m === 'wipe all data' || m === 'clear everything'
+  ) {
     return 'CLEAR_ALL_DATA';
   }
 
-  // Create / generate plan
-  if ((m.includes('create') || m.includes('generate') || m.includes('build') || m.includes('make')) &&
-      (m.includes('plan') || m.includes('schedule') || m.includes('timetable'))) {
-    return 'CREATE_PLAN';
-  }
-
-  // Rebuild / regenerate
-  if (m.includes('rebuild') || m.includes('regenerate') || m.includes('recalculate') || m.includes('redo')) {
+  if (
+    m === 'rebuild my plan' || m === 'rebuild plan' ||
+    m === 'recalculate schedule' || m === 'rebuild my entire study schedule.' ||
+    m === 'rebuild my entire study schedule'
+  ) {
     return 'REBUILD_PLAN';
   }
 
-  // Reschedule missed
-  if (m.includes('missed') || m.includes('miss') || m.includes('reschedule') || m.includes('yesterday') || m.includes('catch up')) {
+  if (
+    m === 'reschedule missed' || m === 'reschedule missed sessions' ||
+    m === 'reschedule my missed sessions' || m === 'fix my missed sessions' ||
+    m === 'i missed yesterday. please reschedule my missed sessions.' ||
+    m === 'i missed yesterday. fix my plan.'
+  ) {
     return 'RESCHEDULE_MISSED';
   }
 
-  // Update daily hours
-  if ((m.includes('hour') || m.includes('hrs')) && 
-      (m.includes('study') || m.includes('only') || m.includes('per day') || m.includes('daily') || m.includes('a day'))) {
+  if (/^(?:set|change|update|make)\s+(?:daily\s+)?hours\s+(?:to\s+)?\d+/i.test(m) || /^i can (?:only\s+)?study \d+\s*(?:hours|hrs)/i.test(m)) {
     return 'UPDATE_HOURS';
   }
 
-  // Update preferences
-  if (m.includes('sunday') || m.includes('weekend') || m.includes('prefer') || m.includes('session') || 
-      m.includes('minute') || m.includes('lighter') || m.includes('revision-heavy') || m.includes('morning') || m.includes('evening')) {
-    return 'UPDATE_PREFERENCES';
-  }
-
-  // Move / update exam
-  if ((m.includes('move') || m.includes('change') || m.includes('update') || m.includes('shift')) && 
-      (m.includes('exam') || m.includes('test') || m.includes('october') || m.includes('oct'))) {
-    return 'UPDATE_EXAM';
-  }
-
-  // Delete exam
-  if ((m.includes('delete') || m.includes('remove') || m.includes('cancel')) && 
-      (m.includes('exam') || m.includes('test'))) {
-    return 'DELETE_EXAM';
-  }
-
-  // Add exam
-  if ((m.includes('add') || m.includes('new') || m.includes('schedule')) && 
-      (m.includes('exam') || m.includes('test'))) {
-    return 'ADD_EXAM';
-  }
-
-  // Add topics
-  if ((m.includes('add') || m.includes('include') || m.includes('new')) && 
-      (m.includes('topic') || m.includes('chapter') || m.includes('subject'))) {
-    return 'ADD_TOPIC';
-  }
-
-  // Mark complete
-  if (m.includes('complete') || m.includes('done') || m.includes('finished') || m.includes('mark')) {
-    return 'MARK_COMPLETE';
-  }
-
-  // Query next exam
-  if (m.includes('next exam') || m.includes('upcoming exam') || m.includes('when is my')) {
-    return 'QUERY_NEXT_EXAM';
-  }
-
-  // Query progress
-  if (m.includes('progress') || m.includes('how much') || m.includes('percent') || m.includes('completed')) {
-    return 'QUERY_PROGRESS';
-  }
-
-  // Query plan
-  if (m.includes('what should') || m.includes('study now') || m.includes('today') || m.includes('priorit')) {
-    return 'QUERY_PLAN';
-  }
-
+  // All questions, advice, explanations, and conversations go to the LLM
   return 'GENERAL_CHAT';
 }
 
@@ -281,37 +221,7 @@ function handleUpdateHours(message: string): AgentResponse {
   };
 }
 
-function handleQueryPlan(ctx: AgentContext): AgentResponse {
-  const nextTask = ctx.tasks.find(t => t.date === ctx.referenceDate && t.status === 'PENDING');
-  if (!nextTask) {
-    return {
-      message: `> ALL DONE TODAY\n\nYou've completed all study sessions for today (${ctx.referenceDate}). Great work!\n\nYour next exam: **${ctx.exams[0]?.name || 'None scheduled'}**.`,
-    };
-  }
-  return {
-    message: `> CURRENT PRIORITY\n\nYour next study session:\n\n**${nextTask.topicTitle}**\n${nextTask.subjectName} • ${nextTask.startTime}\n\nThis is your highest-priority block right now. Lock in.`,
-  };
-}
 
-function handleQueryProgress(ctx: AgentContext): AgentResponse {
-  return {
-    message: `> SYLLABUS READINESS\n\n**${ctx.completedCount} / ${ctx.totalTopicsCount} topics** completed\n**${ctx.overallProgressPercent}%** of your syllabus covered\n\nKeep at it — consistency compounds.`,
-  };
-}
-
-function handleQueryNextExam(ctx: AgentContext): AgentResponse {
-  const sortedExams = [...ctx.exams].sort((a, b) => a.date.localeCompare(b.date));
-  const upcoming = sortedExams.find(e => e.date >= ctx.referenceDate);
-  if (!upcoming) {
-    return { message: `> NO UPCOMING EXAMS\n\nNo exams scheduled after ${ctx.referenceDate}.` };
-  }
-  const d1 = new Date(ctx.referenceDate);
-  const d2 = new Date(upcoming.date);
-  const days = Math.ceil((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
-  return {
-    message: `> NEXT EXAM\n\n**${upcoming.name}**\n${upcoming.date} at ${upcoming.time}\n\n**${days} day(s)** remaining\n\nFocus window is open. Prioritize now.`,
-  };
-}
 
 function handleClearAllData(): AgentResponse {
   return {
@@ -475,33 +385,40 @@ async function handleGeneralChat(request: AgentRequest): Promise<AgentResponse> 
   const groq = getGroqClient();
   const ctx = request.context;
 
-  const systemPrompt = `You are REVISIONLY AI — an intelligent academic planning agent embedded in the Revisionly study app.
+  const examsSummary = ctx.exams && ctx.exams.length > 0
+    ? ctx.exams.map(e => `${e.name} on ${e.date} at ${e.time}`).join('; ')
+    : 'None scheduled yet';
 
-You have DIRECT access to the user's study data and can perform real actions. You are NOT a generic chatbot.
-You never say "I cannot modify your plan" — you either DO it or explain a specific technical reason you can't.
+  const topicsSummary = `${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0} completed (${ctx.overallProgressPercent || 0}%)`;
+  const missedSummary = ctx.missedTasks && ctx.missedTasks.length > 0
+    ? `${ctx.missedTasks.length} missed (${ctx.missedTasks.slice(0, 3).map(m => m.topicTitle).join(', ')})`
+    : 'None';
 
-CURRENT USER STATE:
-- Reference Date: ${ctx.referenceDate}
-- Exams (${ctx.exams.length}): ${ctx.exams.slice(0, 5).map(e => `${e.name} on ${e.date}`).join('; ') || 'None'}
-- Topics: ${ctx.completedCount}/${ctx.totalTopicsCount} completed (${ctx.overallProgressPercent}%)
-- Daily study hours: ${ctx.dailyHours}h
-- Missed sessions: ${ctx.missedTasks.length}
-- Today's plan: ${ctx.tasks.filter(t => t.date === ctx.referenceDate).length} sessions
+  const todayTasksSummary = ctx.tasks && ctx.tasks.filter(t => t.date === ctx.referenceDate).length > 0
+    ? ctx.tasks.filter(t => t.date === ctx.referenceDate).map(t => `${t.topicTitle} [${t.status}]`).join('; ')
+    : 'No tasks allocated for today';
 
-CONVERSATION HISTORY:
-${request.history.slice(-6).map(h => `${h.role.toUpperCase()}: ${h.content}`).join('\n')}
+  const systemPrompt = `You are REVISIONLY AI — an elite academic planning and study coaching agent embedded in the Revisionly study planner app.
 
-RULES:
-- Be concise, editorial, direct (2-4 sentences max unless planning)
-- Use > PREFIX for system-style responses
-- Never use generic AI disclaimers
-- If user asks you to do something the app supports, tell them you'll handle it
-- Reference their actual data (exam names, topic counts, etc.)
-- Use JetBrains Mono-style technical language sparingly`;
+STUDENT PROFILE & LIVE CONTEXT:
+- Today's Date: ${ctx.referenceDate}
+- Exams Scheduled: ${examsSummary}
+- Syllabus Coverage: ${topicsSummary}
+- Daily Study Availability: ${ctx.dailyHours || 3} hours/day
+- Missed Revision Sessions: ${missedSummary}
+- Scheduled Tasks for Today: ${todayTasksSummary}
+
+YOUR ROLE & INSTRUCTIONS:
+- You are speaking directly to a student. Be supportive, concise, analytically sharp, and highly actionable.
+- NEVER give generic, repetitive, or canned responses. Always tailor your reply specifically to what the student is asking right now.
+- If asked "What to study now?" or "What should I study?": Check their earliest upcoming exam and pending topics. Recommend a concrete study session with duration and active recall strategy.
+- If asked about progress: Give a direct, encouraging evaluation with realistic countdown guidance.
+- If they ask general academic or study questions (e.g., explaining a concept, study techniques like Feynman or Pomodoro), explain clearly and concisely.
+- Keep responses readable using clean formatting (bullet points, bold text). Keep under 180 words unless a detailed breakdown is requested.`;
 
   if (!groq) {
     return {
-      message: `> AI OFFLINE\n\nGroq AI is not configured. Add GROQ_API_KEY to your .env file to enable intelligent responses.\n\nI can still execute actions — try: "delete my plan", "create my schedule", "reschedule missed sessions".`,
+      message: `> Groq AI is temporarily unavailable. Check your connection or verify your API key in Settings.`,
       fallback: true,
     };
   }
@@ -519,8 +436,8 @@ RULES:
     const result = await groq.chat.completions.create({
       model: 'qwen/qwen3.8-27b',
       messages,
-      temperature: 0.5,
-      max_tokens: 400,
+      temperature: 0.7,
+      max_tokens: 450,
     });
 
     return {
@@ -528,9 +445,9 @@ RULES:
     };
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn('[Agent] Chat fallback:', errMsg);
+    console.warn('[Agent] Chat error:', errMsg);
     return {
-      message: `> AGENT ACTIVE\n\nI'm connected to your data. What would you like me to do?\n\nTry: "Delete my plan", "Create a new schedule", "Reschedule missed sessions", or "How much of my syllabus is done?"`,
+      message: `> I encountered an error connecting to the AI model (${errMsg}). Please try again or rephrase your question.`,
       fallback: true,
     };
   }
@@ -554,16 +471,6 @@ export async function runAgent(request: AgentRequest): Promise<AgentResponse> {
     case 'REBUILD_PLAN':      return handleRebuildPlan();
     case 'RESCHEDULE_MISSED': return handleRescheduleMissed(ctx);
     case 'UPDATE_HOURS':      return handleUpdateHours(request.message);
-    case 'UPDATE_EXAM':
-    case 'DELETE_EXAM':
-    case 'ADD_EXAM':
-    case 'ADD_TOPIC':
-    case 'DELETE_TOPIC':
-    case 'MARK_COMPLETE':
-    case 'UPDATE_PREFERENCES': return handleGeneralChat(request); // LLM handles complex mutations
-    case 'QUERY_PLAN':        return handleQueryPlan(ctx);
-    case 'QUERY_PROGRESS':    return handleQueryProgress(ctx);
-    case 'QUERY_NEXT_EXAM':   return handleQueryNextExam(ctx);
     case 'EXTRACT_TIMETABLE':
     case 'EXTRACT_SYLLABUS':  return extractFromFiles(request, intent);
     default:                  return handleGeneralChat(request);
