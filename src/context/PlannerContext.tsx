@@ -86,6 +86,7 @@ export interface PlannerContextType {
   exportPlanAsJSON: () => void;
   dismissToast: (id: string) => void;
   recalculateSchedule: () => void;
+  addToast: (type: NotificationToast['type'], title: string, message: string) => void;
 }
 
 const PlannerContext = createContext<PlannerContextType | undefined>(undefined);
@@ -808,6 +809,7 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
         exportPlanAsJSON,
         dismissToast,
         recalculateSchedule,
+        addToast,
       }}
     >
       {children}

@@ -6,28 +6,40 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-function groqDevApiPlugin(): Plugin {
+function agentApiPlugin(): Plugin {
   return {
-    name: 'groq-dev-api-middleware',
+    name: 'agent-api-middleware',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api/ai')) {
           return next();
         }
 
-        // Handle JSON body
-        let bodyStr = '';
-        req.on('data', chunk => {
-          bodyStr += chunk;
-        });
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
+        res.setHeader('Content-Type', 'application/json');
+
+        // Collect raw body
+        const chunks: Buffer[] = [];
+        req.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
 
         req.on('end', async () => {
           try {
+            const rawBuf = Buffer.concat(chunks);
+            const bodyStr = rawBuf.toString('utf-8');
             const body = bodyStr ? JSON.parse(bodyStr) : {};
             const { generateAIStudyPlan, queryAIAssistant } = await import('./server/groqService.ts');
 
-            res.setHeader('Content-Type', 'application/json');
+            // ── NEW: Agent endpoint ──────────────────────────────────────
+            if (req.url === '/api/ai/agent') {
+              const { runAgent } = await import('./server/agentService.ts');
+              const result = await runAgent(body);
+              res.end(JSON.stringify(result));
+              return;
+            }
 
+            // ── Existing endpoints ───────────────────────────────────────
             if (req.url === '/api/ai/assistant') {
               const result = await queryAIAssistant(body);
               res.end(JSON.stringify(result));
@@ -60,6 +72,7 @@ function groqDevApiPlugin(): Plugin {
             res.end(JSON.stringify({ error: 'Endpoint not found' }));
           } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : 'Internal Server Error';
+            console.error('[Agent API Error]', errMsg);
             res.statusCode = 500;
             res.end(JSON.stringify({ error: errMsg, fallback: true }));
           }
@@ -74,6 +87,6 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    groqDevApiPlugin(),
+    agentApiPlugin(),
   ],
 });
