@@ -158,13 +158,27 @@ function isSyllabusOrTimetableInput(m: string): boolean {
   return false;
 }
 
+function isRebuildOrScheduleCommand(m: string): boolean {
+  const lower = m.toLowerCase().trim();
+  const phrases = [
+    'do the timetable', 'do timetable', 'do my timetable',
+    'schedule study timing', 'schedule study time', 'schedule timing',
+    'schedule study for me', 'schedule for me', 'schedule my study',
+    'update the timetable', 'update timetable', 'update my timetable',
+    'update the schedule', 'update schedule', 'update my schedule',
+    'rebuild my plan', 'rebuild plan', 'rebuild schedule', 'recalculate schedule',
+    'create timetable', 'create my timetable', 'create study timetable',
+    'generate timetable', 'generate study plan', 'generate plan', 'generate my plan',
+    'build timetable', 'build my timetable', 'build plan', 'build my plan',
+    'build schedule', 'build my schedule', 'make timetable', 'make my timetable',
+    'make a timetable', 'set up timetable', 'setup timetable', 'fix my timetable',
+    'rebalance plan', 'rebalance schedule', 'replan'
+  ];
+  return phrases.some(p => lower.includes(p));
+}
+
 function classifyIntent(message: string, hasAttachments: boolean, _attachmentNames?: string[]): IntentType {
   const m = message.toLowerCase().trim();
-
-  // Attachments or explicit text syllabus/timetable input
-  if (hasAttachments || isSyllabusOrTimetableInput(m)) {
-    return 'EXTRACT_DATA';
-  }
 
   // Explicit action commands only (never hijack conversation/questions)
   if (
@@ -182,12 +196,13 @@ function classifyIntent(message: string, hasAttachments: boolean, _attachmentNam
     return 'CLEAR_ALL_DATA';
   }
 
-  if (
-    m === 'rebuild my plan' || m === 'rebuild plan' ||
-    m === 'recalculate schedule' || m === 'rebuild my entire study schedule.' ||
-    m === 'rebuild my entire study schedule'
-  ) {
+  if (isRebuildOrScheduleCommand(m)) {
     return 'REBUILD_PLAN';
+  }
+
+  // Attachments or explicit text syllabus/timetable input
+  if (hasAttachments || isSyllabusOrTimetableInput(m)) {
+    return 'EXTRACT_DATA';
   }
 
   if (
@@ -685,6 +700,12 @@ async function runClientAgent(
       const extracted = await extractSyllabusAndTimetableClient(message, attachments);
       if (extracted) {
         return extracted;
+      }
+      if (attachments && attachments.length > 0) {
+        const fileList = attachments.map(a => `• **${a.name}**`).join('\n');
+        return {
+          message: `> ATTACHED DOCUMENTS RECEIVED\n\nI received your **${attachments.length} attached file(s)**:\n${fileList}\n\nI couldn't automatically detect structured exam dates or syllabus topics from these files.\n\n**To update your timetable right now:**\n1. Type or paste your exam dates directly (e.g. *"Maths on Oct 15 at 9am, Physics on Oct 18"*).\n2. Or click **"REBUILD PLAN"** to synchronize your timetable immediately!`,
+        };
       }
       const directReply = await callGroqDirect(message, context, history);
       if (directReply) {
