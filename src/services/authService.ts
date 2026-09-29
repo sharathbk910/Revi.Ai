@@ -61,7 +61,6 @@ export const authService = {
       email: email.trim().toLowerCase(),
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: window.location.origin,
       },
     });
 
