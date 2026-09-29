@@ -47,6 +47,7 @@ export interface PlannerContextType {
   isAuthenticated: boolean;
   isGuest: boolean;
   isSupabaseOnline: boolean;
+  isAuthLoading: boolean;
   isAuthModalOpen: boolean;
   isDemoImporting: boolean;
   openAuthModal: () => void;
@@ -58,6 +59,7 @@ export interface PlannerContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
   loginWithGoogle: () => Promise<{ error: any }>;
+  loginWithApple: () => Promise<{ error: any }>;
   importNxtWaveDemo: () => Promise<void>;
 
   // AI Insights State
@@ -115,6 +117,7 @@ const EMPTY_PREFERENCES: Preferences = {
 export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isDemoImporting, setIsDemoImporting] = useState(false);
   const isSupabaseOnline = isSupabaseConfigured();
@@ -212,14 +215,21 @@ const getTodayDateString = (): string => {
 
   // 1. Auth Subscription & Session Detection
   useEffect(() => {
-    if (!isSupabaseOnline) return;
+    if (!isSupabaseOnline) {
+      setIsAuthLoading(false);
+      return;
+    }
 
     authService.getUser().then((currentUser: User | null) => {
       setUser(currentUser);
+      setIsAuthLoading(false);
+    }).catch(() => {
+      setIsAuthLoading(false);
     });
 
     const { data: authListener } = authService.onAuthStateChange((_session, authUser) => {
       setUser(authUser);
+      setIsAuthLoading(false);
     });
 
     return () => {
@@ -882,6 +892,10 @@ const getTodayDateString = (): string => {
     return await authService.signInWithGoogle();
   }, []);
 
+  const loginWithApple = useCallback(async () => {
+    return await authService.signInWithApple();
+  }, []);
+
   return (
     <PlannerContext.Provider
       value={{
@@ -910,6 +924,7 @@ const getTodayDateString = (): string => {
         isAuthenticated: !!user,
         isGuest: !user,
         isSupabaseOnline,
+        isAuthLoading,
         isAuthModalOpen,
         isDemoImporting,
         openAuthModal: () => setIsAuthModalOpen(true),
@@ -921,6 +936,7 @@ const getTodayDateString = (): string => {
         logout,
         resetPassword,
         loginWithGoogle,
+        loginWithApple,
         importNxtWaveDemo,
 
         // AI Advice

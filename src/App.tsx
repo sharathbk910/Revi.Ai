@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { PlannerProvider, usePlanner } from './context/PlannerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastContainer } from './components/common/ToastContainer';
@@ -19,12 +19,22 @@ import { AddTopicModal } from './components/modals/AddTopicModal';
 import { BulkSyllabusModal } from './components/modals/BulkSyllabusModal';
 import { OnboardingModal } from './components/modals/OnboardingModal';
 import { AuthModal } from './components/auth/AuthModal';
+import { StartingAuthPage } from './components/auth/StartingAuthPage';
 import type { Exam } from './types';
 import { MessageSquare } from 'lucide-react';
 
 const AppContent: React.FC = () => {
-  const { isAuthModalOpen, closeAuthModal } = usePlanner();
-  const [activeTab, setActiveTab] = useState<string>('landing');
+  const { isAuthModalOpen, closeAuthModal, isAuthenticated, isAuthLoading } = usePlanner();
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [isBypassedPreview, setIsBypassedPreview] = useState<boolean>(false);
+
+  const prevAuthRef = useRef(isAuthenticated);
+  useEffect(() => {
+    if (prevAuthRef.current && !isAuthenticated) {
+      setIsBypassedPreview(false);
+    }
+    prevAuthRef.current = isAuthenticated;
+  }, [isAuthenticated]);
 
   // Modals state
   const [isAiOpen, setIsAiOpen] = useState(false);
@@ -50,6 +60,28 @@ const AppContent: React.FC = () => {
     setEditingExam(exam);
   };
 
+  // 1. Session check loading state
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#171821] flex flex-col items-center justify-center text-white font-mono">
+        <div className="w-9 h-9 border-2 border-[#6c56ec] border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="text-xs text-[#8c8f9f] tracking-widest uppercase">
+          [ SYNCHRONIZING SESSION ]
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Authentication Requirement Gate: User must log in first to use the website
+  if (!isAuthenticated && !isBypassedPreview) {
+    return (
+      <div className="min-h-screen bg-[#171821] text-[#f1f2f6] font-['Inter_Tight',sans-serif]">
+        <ToastContainer />
+        <StartingAuthPage onBypassToWebsite={() => setIsBypassedPreview(true)} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex flex-col font-['Inter_Tight',sans-serif] relative transition-colors duration-150 editorial-grain selection:bg-[var(--accent)] selection:text-white">
       {/* Floating Global Toasts */}
@@ -59,7 +91,13 @@ const AppContent: React.FC = () => {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenOnboarding={() => setIsOnboardingOpen(true)}
+        onOpenOnboarding={() => {
+          if (!isAuthenticated) {
+            setIsBypassedPreview(false);
+          } else {
+            setIsOnboardingOpen(true);
+          }
+        }}
         onOpenNexAssistant={() => setIsAiOpen(true)}
       />
 
@@ -67,8 +105,20 @@ const AppContent: React.FC = () => {
       {activeTab === 'landing' ? (
         <main className="flex-1 pb-16">
           <LandingPage
-            onStartPlanning={() => setIsOnboardingOpen(true)}
-            onExploreDemo={() => setActiveTab('dashboard')}
+            onStartPlanning={() => {
+              if (!isAuthenticated) {
+                setIsBypassedPreview(false);
+              } else {
+                setIsOnboardingOpen(true);
+              }
+            }}
+            onExploreDemo={() => {
+              if (!isAuthenticated) {
+                setIsBypassedPreview(false);
+              } else {
+                setActiveTab('dashboard');
+              }
+            }}
           />
         </main>
       ) : (
