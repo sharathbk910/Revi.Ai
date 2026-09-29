@@ -156,20 +156,36 @@ function isSyllabusOrTimetableInput(m: string): boolean {
 function isRebuildOrScheduleCommand(m: string): boolean {
   const lower = m.toLowerCase().trim();
   const phrases = [
-    'do the timetable', 'do timetable', 'do my timetable',
+    'real time', 'realtime', 'real-time',
+    'do the timetable', 'do timetable', 'do my timetable', 'do the time table', 'do time table',
     'schedule study timing', 'schedule study time', 'schedule timing',
     'schedule study for me', 'schedule for me', 'schedule my study',
     'update the timetable', 'update timetable', 'update my timetable',
+    'update the time table', 'update time table', 'update my time table',
     'update the schedule', 'update schedule', 'update my schedule',
     'rebuild my plan', 'rebuild plan', 'rebuild schedule', 'recalculate schedule',
     'create timetable', 'create my timetable', 'create study timetable',
+    'create time table', 'create my time table',
     'generate timetable', 'generate study plan', 'generate plan', 'generate my plan',
+    'generate time table', 'generate my time table',
     'build timetable', 'build my timetable', 'build plan', 'build my plan',
+    'build time table', 'build my time table',
     'build schedule', 'build my schedule', 'make timetable', 'make my timetable',
-    'make a timetable', 'set up timetable', 'setup timetable', 'fix my timetable',
+    'make a timetable', 'make time table', 'make a time table',
+    'set up timetable', 'setup timetable', 'fix my timetable',
+    'set up time table', 'setup time table', 'fix my time table',
     'rebalance plan', 'rebalance schedule', 'replan'
   ];
-  return phrases.some(p => lower.includes(p));
+  if (phrases.some(p => lower.includes(p))) return true;
+
+  if (
+    (lower.includes('update') || lower.includes('sync') || lower.includes('refresh') || lower.includes('recalculate')) &&
+    (lower.includes('timetable') || lower.includes('time table') || lower.includes('schedule') || lower.includes('plan'))
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function classifyIntent(message: string, hasAttachments: boolean, _attachmentNames?: string[]): IntentType {
@@ -261,11 +277,12 @@ function handleCreatePlan(ctx: AgentContext): AgentResponse {
 function handleRebuildPlan(ctx?: AgentContext): AgentResponse {
   const examCount = ctx?.exams?.length || 0;
   const topicCount = ctx?.topics?.filter(t => !t.completed).length || 0;
+  const todayStr = ctx?.referenceDate || new Date().toISOString().split('T')[0];
 
   return {
-    message: `> REBUILDING STUDY TIMETABLE\n\nRecalculating your study timetable based on **${examCount} exam(s)**, **${topicCount} pending topic(s)**, and **${ctx?.dailyHours || 3}h/day** availability.\n\nApplying updates to your website timetable now...`,
+    message: `> STUDY TIMETABLE SYNCHRONIZED [REAL-TIME]\n\nRecalculating your study timetable starting from today (**${todayStr}**) based on **${examCount} exam(s)**, **${topicCount} pending topic(s)**, and **${ctx?.dailyHours || 3}h/day** availability.\n\nApplying real-time updates to your website timetable now...`,
     requiresConfirmation: false,
-    tool: { name: 'rebuild_study_plan', params: {} },
+    tool: { name: 'rebuild_study_plan', params: { referenceDate: todayStr } },
   };
 }
 

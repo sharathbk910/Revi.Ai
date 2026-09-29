@@ -1,8 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { usePlanner } from '../../context/PlannerContext';
 import { TaskCard } from './TaskCard';
 import { DailyCheckInDialog } from './DailyCheckInDialog';
-import { Plus, AlertTriangle } from 'lucide-react';
+import { Plus, AlertTriangle, Clock } from 'lucide-react';
 
 interface DashboardViewProps {
   onOpenAddTopic: () => void;
@@ -24,7 +24,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     capacityWarning,
     optimizePlan,
     referenceDate,
+    syncToRealTime,
   } = usePlanner();
+
+  const [liveTime, setLiveTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const completedToday = todayTasks.filter(t => t.status === 'COMPLETED').length;
   const totalToday = todayTasks.length;
@@ -62,12 +74,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <h1 className="font-display text-4xl sm:text-6xl text-[var(--foreground)] tracking-tight-poster uppercase leading-none">
               {greeting}
             </h1>
-            <div className="font-mono text-xs sm:text-sm text-[var(--muted-foreground)] mt-3">
-              TODAY'S PLAN • {referenceDate}
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <span className="font-mono text-xs sm:text-sm text-[var(--muted-foreground)]">
+                TODAY'S PLAN • {referenceDate}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono text-[10px] uppercase font-bold tracking-wider">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                LIVE {liveTime}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={syncToRealTime}
+              className="btn-secondary text-xs"
+              title="Synchronize timetable with real-time live clock"
+            >
+              <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Real-Time Sync</span>
+            </button>
             <button
               onClick={onOpenAddTopic}
               className="btn-secondary text-xs"

@@ -82,6 +82,7 @@ export interface PlannerContextType {
   updateAvailability: (availability: Partial<Availability>) => Promise<void>;
   updatePreferences: (preferences: Partial<Preferences>) => Promise<void>;
   setReferenceDate: (dateStr: string) => void;
+  syncToRealTime: () => void;
   optimizePlan: (strategy: 'ADD_HOURS' | 'COMPRESS_SESSIONS' | 'PRIORITIZE_HIGH') => void;
   resetDemoData: () => void;
   clearAllData: () => Promise<void>;
@@ -175,7 +176,14 @@ const getTodayDateString = (): string => {
   const [referenceDate, setReferenceDateState] = useState<string>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_KEY}_reference_date`);
-      if (saved) return saved;
+      const today = getTodayDateString();
+      if (saved) {
+        if (saved < today) {
+          localStorage.setItem(`${STORAGE_KEY}_reference_date`, today);
+          return today;
+        }
+        return saved;
+      }
     } catch {}
     return getTodayDateString();
   });
@@ -699,6 +707,15 @@ const getTodayDateString = (): string => {
     addToast('SYSTEM', '> TIMELINE.SHIFTED', `Current study date set to ${newDate}.`);
   }, [addToast]);
 
+  const syncToRealTime = useCallback(() => {
+    const today = getTodayDateString();
+    setReferenceDateState(today);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_reference_date`, today);
+    } catch {}
+    addToast('SUCCESS', '> REAL-TIME SYNCHRONIZED', `Timetable synchronized with live date (${today}).`);
+  }, [addToast]);
+
   const optimizePlan = useCallback((strategy: 'ADD_HOURS' | 'COMPRESS_SESSIONS' | 'PRIORITIZE_HIGH') => {
     if (strategy === 'ADD_HOURS') {
       const updated = { ...availability, dailyHours: Math.min(10, availability.dailyHours + 1.5) };
@@ -928,6 +945,7 @@ const getTodayDateString = (): string => {
         updateAvailability,
         updatePreferences,
         setReferenceDate,
+        syncToRealTime,
         optimizePlan,
         resetDemoData,
         clearAllData,

@@ -1,17 +1,29 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { usePlanner } from '../../context/PlannerContext';
 import { addDays } from '../../utils/scheduler';
 import type { StudyTask } from '../../types';
 import { TaskCard } from '../dashboard/TaskCard';
-import { Download, Printer, RotateCcw } from 'lucide-react';
+import { Download, Printer, RotateCcw, Clock } from 'lucide-react';
 
 export const PlanView: React.FC = () => {
   const {
     tasks,
     referenceDate,
     recalculateSchedule,
+    syncToRealTime,
     exportPlanAsCSV,
   } = usePlanner();
+
+  const [liveTime, setLiveTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setLiveTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'TODAY' | 'THIS_WEEK' | 'CALENDAR'>('TODAY');
 
@@ -68,12 +80,27 @@ export const PlanView: React.FC = () => {
             <h1 className="font-display text-4xl sm:text-6xl text-[var(--foreground)] tracking-tight-poster uppercase leading-none">
               MY STUDY PLAN.
             </h1>
-            <div className="font-mono text-xs sm:text-sm text-[var(--muted-foreground)] mt-3">
-              Adaptive distribution • Exam buffers pre-reserved
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <span className="font-mono text-xs sm:text-sm text-[var(--muted-foreground)]">
+                Active Date: {referenceDate}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-mono text-[10px] uppercase font-bold tracking-wider">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                LIVE {liveTime}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={syncToRealTime}
+              className="btn-secondary text-xs"
+              title="Synchronize timetable with real-time live clock"
+            >
+              <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Real-Time Sync</span>
+            </button>
+
             <button
               onClick={exportPlanAsCSV}
               className="btn-secondary text-xs"

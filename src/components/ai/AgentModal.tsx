@@ -283,7 +283,7 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
     availability, preferences, referenceDate,
     addExam, addTopic: _addTopic, bulkAddTopics, updateAvailability, updatePreferences: _updatePreferences,
     deleteExam: _deleteExam, deleteTopic: _deleteTopic, clearAllData, autoRescheduleMissed,
-    recalculateSchedule, addToast,
+    recalculateSchedule, setReferenceDate, syncToRealTime, addToast,
   } = usePlanner();
 
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -388,10 +388,16 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
           addToast('SUCCESS', '> PLAN.CLEARED', 'Study sessions removed. Ready for new schedule.');
           return '> PLAN.CLEARED\n\nYour study sessions have been removed.\n\nSend your exam timetable and syllabus and I\'ll generate a fresh plan.';
 
-        case 'rebuild_study_plan':
-          recalculateSchedule();
-          addToast('SUCCESS', '> PLAN.REBUILT', 'Schedule recalculated from current data.');
-          return `> PLAN.REBUILT\n\nRecalculated from:\n- ${exams.length} exams\n- ${topics.filter(t => !t.completed).length} pending topics\n- ${availability.dailyHours}h/day\n\nOpen Dashboard to see your updated sessions.`;
+        case 'rebuild_study_plan': {
+          const targetRefDate = (tool.params?.referenceDate as string) || undefined;
+          if (targetRefDate) {
+            setReferenceDate(targetRefDate);
+          } else {
+            syncToRealTime();
+          }
+          addToast('SUCCESS', '> PLAN.REBUILT', 'Timetable synchronized in real time.');
+          return `> STUDY TIMETABLE SYNCHRONIZED [REAL-TIME]\n\nRecalculated in real time from:\n- Reference Date: ${targetRefDate || new Date().toISOString().split('T')[0]} (Live)\n- ${exams.length} exams\n- ${topics.filter(t => !t.completed).length} pending topics\n- ${availability.dailyHours}h/day\n\nOpen **Dashboard** or **My Plan** to see your updated sessions.`;
+        }
 
         case 'generate_study_plan':
           recalculateSchedule();

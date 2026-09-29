@@ -36,20 +36,72 @@ export function formatReadableDate(dateStr: string): string {
   }
 }
 
-// Standard time slots throughout the day based on user preferences
-export function getAvailableTimeSlots(dailyHours: number, sessionDuration: number = 45): { start: string; end: string }[] {
-  const count = Math.max(1, Math.min(8, Math.floor((dailyHours * 60) / sessionDuration)));
-  const masterSlots = [
-    { start: '09:00', end: '09:45' },
-    { start: '10:00', end: '10:45' },
-    { start: '11:15', end: '12:00' },
-    { start: '14:00', end: '14:45' },
-    { start: '15:15', end: '16:00' },
-    { start: '17:00', end: '17:45' },
-    { start: '19:00', end: '19:45' },
-    { start: '20:15', end: '21:00' },
-  ];
-  return masterSlots.slice(0, count);
+// Standard time slots throughout the day based on user preferences & selected time blocks
+export function getAvailableTimeSlots(
+  dailyHours: number,
+  sessionDuration: number = 45,
+  slotsPref?: Availability['slots']
+): { start: string; end: string }[] {
+  const count = Math.max(1, Math.min(10, Math.floor((dailyHours * 60) / sessionDuration)));
+
+  const blockSlots = {
+    morning: [
+      { start: '08:30', end: '09:15' },
+      { start: '09:30', end: '10:15' },
+      { start: '10:30', end: '11:15' },
+      { start: '11:30', end: '12:15' },
+    ],
+    afternoon: [
+      { start: '13:30', end: '14:15' },
+      { start: '14:30', end: '15:15' },
+      { start: '15:30', end: '16:15' },
+      { start: '16:30', end: '17:15' },
+    ],
+    evening: [
+      { start: '17:30', end: '18:15' },
+      { start: '18:30', end: '19:15' },
+      { start: '19:30', end: '20:15' },
+    ],
+    night: [
+      { start: '20:30', end: '21:15' },
+      { start: '21:30', end: '22:15' },
+      { start: '22:30', end: '23:15' },
+    ],
+  };
+
+  let candidateSlots: { start: string; end: string }[] = [];
+
+  if (slotsPref && (slotsPref.morning || slotsPref.afternoon || slotsPref.evening || slotsPref.night)) {
+    if (slotsPref.morning) candidateSlots.push(...blockSlots.morning);
+    if (slotsPref.afternoon) candidateSlots.push(...blockSlots.afternoon);
+    if (slotsPref.evening) candidateSlots.push(...blockSlots.evening);
+    if (slotsPref.night) candidateSlots.push(...blockSlots.night);
+  }
+
+  if (candidateSlots.length === 0) {
+    candidateSlots = [
+      { start: '09:00', end: '09:45' },
+      { start: '10:00', end: '10:45' },
+      { start: '11:15', end: '12:00' },
+      { start: '14:00', end: '14:45' },
+      { start: '15:15', end: '16:00' },
+      { start: '17:00', end: '17:45' },
+      { start: '19:00', end: '19:45' },
+      { start: '20:15', end: '21:00' },
+    ];
+  }
+
+  // Adjust slot end times if sessionDuration differs from 45 min
+  const adjusted = candidateSlots.map(s => {
+    if (sessionDuration === 45) return s;
+    const [h, m] = s.start.split(':').map(Number);
+    const endMinutes = h * 60 + m + sessionDuration;
+    const endH = String(Math.min(23, Math.floor(endMinutes / 60))).padStart(2, '0');
+    const endM = String(endMinutes % 60).padStart(2, '0');
+    return { start: s.start, end: `${endH}:${endM}` };
+  });
+
+  return adjusted.slice(0, count);
 }
 
 /**
@@ -68,7 +120,7 @@ export function generateStudySchedule(
   topics: Topic[],
   availability: Availability,
   preferences: Preferences,
-  referenceDate: string = '2026-09-28',
+  referenceDate: string = new Date().toISOString().split('T')[0],
   existingTasks: StudyTask[] = []
 ): { tasks: StudyTask[]; capacityWarning: CapacityWarning | null } {
   // If no topics, return empty schedule
@@ -111,7 +163,7 @@ export function generateStudySchedule(
 
   // 4. Capacity Analysis
   const sessionDur = preferences.sessionDuration || 45;
-  const dailySlots = getAvailableTimeSlots(availability.dailyHours, sessionDur);
+  const dailySlots = getAvailableTimeSlots(availability.dailyHours, sessionDur, availability.slots);
   const slotsPerDay = dailySlots.length;
 
   let capacityWarning: CapacityWarning | null = null;
