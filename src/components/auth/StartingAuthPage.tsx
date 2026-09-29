@@ -1,12 +1,8 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Loader2, AlertCircle, ArrowRight, Check } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, Check } from 'lucide-react';
 import { usePlanner } from '../../context/PlannerContext';
 
-interface StartingAuthPageProps {
-  onBypassToWebsite?: () => void;
-}
-
-export const StartingAuthPage: React.FC<StartingAuthPageProps> = ({ onBypassToWebsite }) => {
+export const StartingAuthPage: React.FC = () => {
   const {
     login,
     signup,
@@ -180,18 +176,6 @@ export const StartingAuthPage: React.FC<StartingAuthPageProps> = ({ onBypassToWe
                   / 2.6
                 </span>
               </div>
-
-              {/* Back to website button */}
-              {onBypassToWebsite && (
-                <button
-                  type="button"
-                  onClick={onBypassToWebsite}
-                  className="backdrop-blur-md bg-white/10 hover:bg-white/20 border border-white/15 text-white text-xs px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-sm active:scale-95"
-                >
-                  <span>Back to website</span>
-                  <ArrowRight className="w-3 h-3" />
-                </button>
-              )}
             </div>
 
             {/* Bottom Caption & Carousel Dots */}

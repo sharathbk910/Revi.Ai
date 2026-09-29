@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import { PlannerProvider, usePlanner } from './context/PlannerContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { ToastContainer } from './components/common/ToastContainer';
@@ -26,15 +26,6 @@ import { MessageSquare } from 'lucide-react';
 const AppContent: React.FC = () => {
   const { isAuthModalOpen, closeAuthModal, isAuthenticated, isAuthLoading } = usePlanner();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [isBypassedPreview, setIsBypassedPreview] = useState<boolean>(false);
-
-  const prevAuthRef = useRef(isAuthenticated);
-  useEffect(() => {
-    if (prevAuthRef.current && !isAuthenticated) {
-      setIsBypassedPreview(false);
-    }
-    prevAuthRef.current = isAuthenticated;
-  }, [isAuthenticated]);
 
   // Modals state
   const [isAiOpen, setIsAiOpen] = useState(false);
@@ -63,9 +54,9 @@ const AppContent: React.FC = () => {
   // 1. Session check loading state
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-[#171821] flex flex-col items-center justify-center text-white font-mono">
-        <div className="w-9 h-9 border-2 border-[#6c56ec] border-t-transparent rounded-full animate-spin mb-4" />
-        <div className="text-xs text-[#8c8f9f] tracking-widest uppercase">
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center text-white font-mono">
+        <div className="w-9 h-9 border-2 border-[#FF3D00] border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="text-xs text-[#71717A] tracking-widest uppercase">
           [ SYNCHRONIZING SESSION ]
         </div>
       </div>
@@ -73,11 +64,11 @@ const AppContent: React.FC = () => {
   }
 
   // 2. Authentication Requirement Gate: User must log in first to use the website
-  if (!isAuthenticated && !isBypassedPreview) {
+  if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#171821] text-[#f1f2f6] font-['Inter_Tight',sans-serif]">
+      <div className="min-h-screen bg-[#0A0A0A] text-[#FAFAFA] font-['Inter_Tight',sans-serif]">
         <ToastContainer />
-        <StartingAuthPage onBypassToWebsite={() => setIsBypassedPreview(true)} />
+        <StartingAuthPage />
       </div>
     );
   }
@@ -91,13 +82,7 @@ const AppContent: React.FC = () => {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onOpenOnboarding={() => {
-          if (!isAuthenticated) {
-            setIsBypassedPreview(false);
-          } else {
-            setIsOnboardingOpen(true);
-          }
-        }}
+        onOpenOnboarding={() => setIsOnboardingOpen(true)}
         onOpenNexAssistant={() => setIsAiOpen(true)}
       />
 
@@ -105,20 +90,8 @@ const AppContent: React.FC = () => {
       {activeTab === 'landing' ? (
         <main className="flex-1 pb-16">
           <LandingPage
-            onStartPlanning={() => {
-              if (!isAuthenticated) {
-                setIsBypassedPreview(false);
-              } else {
-                setIsOnboardingOpen(true);
-              }
-            }}
-            onExploreDemo={() => {
-              if (!isAuthenticated) {
-                setIsBypassedPreview(false);
-              } else {
-                setActiveTab('dashboard');
-              }
-            }}
+            onStartPlanning={() => setIsOnboardingOpen(true)}
+            onExploreDemo={() => setActiveTab('dashboard')}
           />
         </main>
       ) : (
