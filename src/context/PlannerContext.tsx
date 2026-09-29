@@ -59,7 +59,6 @@ export interface PlannerContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
   loginWithGoogle: () => Promise<{ error: any }>;
-  loginWithApple: () => Promise<{ error: any }>;
   importNxtWaveDemo: () => Promise<void>;
 
   // AI Insights State
@@ -892,10 +891,6 @@ const getTodayDateString = (): string => {
     return await authService.signInWithGoogle();
   }, []);
 
-  const loginWithApple = useCallback(async () => {
-    return await authService.signInWithApple();
-  }, []);
-
   return (
     <PlannerContext.Provider
       value={{
@@ -936,7 +931,6 @@ const getTodayDateString = (): string => {
         logout,
         resetPassword,
         loginWithGoogle,
-        loginWithApple,
         importNxtWaveDemo,
 
         // AI Advice

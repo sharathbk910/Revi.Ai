@@ -102,23 +102,6 @@ export const authService = {
     return { error };
   },
 
-  async signInWithApple(): Promise<{ error: AuthError | Error | null }> {
-    if (!isSupabaseConfigured()) {
-      return {
-        error: new Error('Supabase is not configured yet. Add Supabase credentials in .env to use Apple OAuth.'),
-      };
-    }
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'apple',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    });
-
-    return { error };
-  },
-
   async signOut(): Promise<{ error: AuthError | Error | null }> {
     if (!isSupabaseConfigured()) {
       return { error: null };
