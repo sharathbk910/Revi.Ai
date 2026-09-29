@@ -53,6 +53,8 @@ export interface PlannerContextType {
   closeAuthModal: () => void;
   login: (email: string, password: string) => Promise<AuthResponse>;
   signup: (email: string, password: string, displayName?: string) => Promise<AuthResponse>;
+  signInWithOtp: (email: string) => Promise<{ error: any }>;
+  verifyOtp: (email: string, token: string) => Promise<AuthResponse>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: any }>;
   loginWithGoogle: () => Promise<{ error: any }>;
@@ -73,7 +75,8 @@ export interface PlannerContextType {
   updateExam: (id: string, exam: Partial<Exam>) => Promise<void>;
   deleteExam: (id: string) => Promise<void>;
   addTopic: (topic: Omit<Topic, 'id' | 'completed'>) => Promise<void>;
-  bulkAddTopics: (subjectId: string, lines: string[]) => Promise<void>;
+  updateTopic: (topicId: string, topic: Partial<Topic>) => Promise<void>;
+  bulkAddTopics: (subjectId: string, lines: string[], subjectNameFallback?: string) => Promise<void>;
   toggleTopicCompleted: (topicId: string) => Promise<void>;
   deleteTopic: (topicId: string) => Promise<void>;
   updateAvailability: (availability: Partial<Availability>) => Promise<void>;
@@ -161,7 +164,21 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   });
 
-  const [referenceDate, setReferenceDateState] = useState<string>('2026-09-28');
+const getTodayDateString = (): string => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+  const [referenceDate, setReferenceDateState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_KEY}_reference_date`);
+      if (saved) return saved;
+    } catch {}
+    return getTodayDateString();
+  });
   const [tasks, setTasks] = useState<StudyTask[]>([]);
   const [capacityWarning, setCapacityWarning] = useState<CapacityWarning | null>(null);
   const [isRebalancing, setIsRebalancing] = useState<boolean>(false);
@@ -279,7 +296,7 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     runScheduler(topics, exams, availability, preferences, tasks);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exams, topics.length, availability.dailyHours, preferences.sessionDuration, referenceDate]);
+  }, [exams, topics, availability, preferences, referenceDate]);
 
   const recalculateSchedule = useCallback(() => {
     setIsRebalancing(true);
@@ -519,6 +536,26 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const addTopic = useCallback(async (topicData: Omit<Topic, 'id' | 'completed'>) => {
     const tempId = `topic-${Date.now()}`;
     const newTopic: Topic = { ...topicData, id: tempId, completed: false };
+
+    // Ensure subject exists in local subjects state immediately so Syllabus displays it
+    setSubjects(prev => {
+      const exists = prev.some(
+        s => s.id === topicData.subjectId || s.name.toLowerCase() === topicData.subjectName.toLowerCase()
+      );
+      if (!exists) {
+        return [
+          ...prev,
+          {
+            id: topicData.subjectId,
+            name: topicData.subjectName,
+            color: '#00ff88',
+            code: topicData.subjectName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'SUB',
+          },
+        ];
+      }
+      return prev;
+    });
+
     setTopics(prev => [...prev, newTopic]);
 
     if (user && isSupabaseOnline) {
@@ -526,6 +563,13 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const saved = await topicService.createTopic(user.id, topicData);
         if (saved) {
           setTopics(prev => prev.map(t => t.id === tempId ? saved : t));
+          setSubjects(prev =>
+            prev.map(s =>
+              s.id === topicData.subjectId || s.name.toLowerCase() === saved.subjectName.toLowerCase()
+                ? { ...s, id: saved.subjectId }
+                : s
+            )
+          );
         }
       } catch (e) {
         console.warn('Topic cloud sync error:', e);
@@ -535,15 +579,58 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
     addToast('SUCCESS', '> SYLLABUS.APPENDED', `"${newTopic.title}" added to syllabus.`);
   }, [user, isSupabaseOnline, addToast]);
 
-  const bulkAddTopics = useCallback(async (subjectId: string, lines: string[]) => {
-    const subject = subjects.find(s => s.id === subjectId) || DEMO_SUBJECTS[0];
+  const updateTopic = useCallback(async (topicId: string, topicData: Partial<Topic>) => {
+    setTopics(prev => prev.map(t => (t.id === topicId ? { ...t, ...topicData } : t)));
+    setTasks(prev =>
+      prev.map(task => {
+        if (task.topicId === topicId) {
+          return {
+            ...task,
+            topicTitle: topicData.title || task.topicTitle,
+            priority: topicData.priority || task.priority,
+            durationMinutes: topicData.estimatedMinutes || task.durationMinutes,
+          };
+        }
+        return task;
+      })
+    );
+
+    if (user && isSupabaseOnline) {
+      await topicService.updateTopic(user.id, topicId, topicData);
+    }
+    addToast('INFO', '> TOPIC.UPDATED', 'Syllabus concept updated.');
+  }, [user, isSupabaseOnline, addToast]);
+
+  const bulkAddTopics = useCallback(async (subjectId: string, lines: string[], subjectNameFallback?: string) => {
+    const existingSubject = subjects.find(s => s.id === subjectId);
+    const subName = existingSubject?.name || subjectNameFallback || (subjects[0]?.name) || 'General Course';
+    const subId = existingSubject?.id || subjectId || `sub-${Date.now()}`;
+
+    setSubjects(prev => {
+      const exists = prev.some(
+        s => s.id === subId || s.name.toLowerCase() === subName.toLowerCase()
+      );
+      if (!exists) {
+        return [
+          ...prev,
+          {
+            id: subId,
+            name: subName,
+            color: '#00ff88',
+            code: subName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'SUB',
+          },
+        ];
+      }
+      return prev;
+    });
+
     const newItems: Topic[] = lines
       .map(line => line.trim())
       .filter(line => line.length > 0)
       .map((line, idx) => ({
         id: `topic-bulk-${Date.now()}-${idx}`,
-        subjectId: subject.id,
-        subjectName: subject.name,
+        subjectId: subId,
+        subjectName: subName,
         title: line,
         estimatedMinutes: 45,
         priority: 'MEDIUM' as const,
@@ -555,13 +642,19 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       if (user && isSupabaseOnline) {
         try {
-          await topicService.bulkCreateTopics(user.id, subject.id, subject.name, lines);
+          await topicService.bulkCreateTopics(user.id, subId, subName, lines);
+          const [updatedTopics, updatedSubjects] = await Promise.all([
+            topicService.getTopics(user.id),
+            subjectService.getSubjects(user.id),
+          ]);
+          if (updatedTopics.length > 0) setTopics(updatedTopics);
+          if (updatedSubjects.length > 0) setSubjects(updatedSubjects);
         } catch (e) {
           console.warn('Bulk topic sync error:', e);
         }
       }
 
-      addToast('SUCCESS', '> BATCH.IMPORT_COMPLETE', `Imported ${newItems.length} topics into ${subject.name}.`);
+      addToast('SUCCESS', '> BATCH.IMPORT_COMPLETE', `Imported ${newItems.length} topics into ${subName}.`);
     }
   }, [subjects, user, isSupabaseOnline, addToast]);
 
@@ -600,6 +693,9 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const setReferenceDate = useCallback((newDate: string) => {
     setReferenceDateState(newDate);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_reference_date`, newDate);
+    } catch {}
     addToast('SYSTEM', '> TIMELINE.SHIFTED', `Current study date set to ${newDate}.`);
   }, [addToast]);
 
@@ -753,6 +849,18 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return await authService.resetPasswordForEmail(email);
   }, []);
 
+  const signInWithOtp = useCallback(async (email: string) => {
+    return await authService.signInWithOtp(email);
+  }, []);
+
+  const verifyOtp = useCallback(async (email: string, token: string) => {
+    const res = await authService.verifyOtp(email, token);
+    if (res.user) {
+      setUser(res.user);
+    }
+    return res;
+  }, []);
+
   const loginWithGoogle = useCallback(async () => {
     return await authService.signInWithGoogle();
   }, []);
@@ -791,6 +899,8 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
         closeAuthModal: () => setIsAuthModalOpen(false),
         login,
         signup,
+        signInWithOtp,
+        verifyOtp,
         logout,
         resetPassword,
         loginWithGoogle,
@@ -811,6 +921,7 @@ export const PlannerProvider: React.FC<{ children: React.ReactNode }> = ({ child
         updateExam,
         deleteExam,
         addTopic,
+        updateTopic,
         bulkAddTopics,
         toggleTopicCompleted,
         deleteTopic,

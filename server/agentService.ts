@@ -84,21 +84,52 @@ type IntentType =
   | 'REBUILD_PLAN'
   | 'RESCHEDULE_MISSED'
   | 'UPDATE_HOURS'
-  | 'EXTRACT_TIMETABLE'
-  | 'EXTRACT_SYLLABUS'
+  | 'EXTRACT_DATA'
   | 'GENERAL_CHAT';
 
-function classifyIntent(message: string, hasAttachments: boolean, attachmentNames: string[]): IntentType {
+function isSyllabusOrTimetableInput(m: string): boolean {
+  const lower = m.toLowerCase().trim();
+  // Filter out general progress / countdown / schedule query commands
+  if (
+    lower.startsWith('how much') ||
+    lower.startsWith('what should i') ||
+    lower.startsWith('when is my next') ||
+    lower === 'what to study' ||
+    lower === 'study now' ||
+    lower === 'show my progress' ||
+    lower === 'my progress'
+  ) {
+    return false;
+  }
+
+  const indicators = [
+    'syllabus', 'timetable', 'curriculum',
+    'add topic', 'add topics', 'import topic', 'import topics',
+    'update topic', 'update topics', 'update syllabus',
+    'add exam', 'add exams', 'import exam', 'import exams',
+    'my topics', 'these topics', 'here is my syllabus', 'here are my topics',
+    'here is my timetable', 'my timetable is', 'my syllabus is',
+    'exam date', 'exam schedule', 'chapter', 'modules', 'unit 1', 'unit 2'
+  ];
+
+  if (indicators.some(ind => lower.includes(ind))) return true;
+
+  // Structural list check: multiple lines with bullets or numbering and subject/exam content
+  const lines = m.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length >= 3) {
+    const listLines = lines.filter(l => /^[*-•\d+.]/i.test(l));
+    if (listLines.length >= 2) return true;
+  }
+
+  return false;
+}
+
+function classifyIntent(message: string, hasAttachments: boolean, _attachmentNames?: string[]): IntentType {
   const m = message.toLowerCase().trim();
 
-  // File-based intents
-  if (hasAttachments) {
-    const names = attachmentNames.map(n => n.toLowerCase()).join(' ');
-    if (names.includes('timetable') || names.includes('exam') || names.includes('schedule')) return 'EXTRACT_TIMETABLE';
-    if (names.includes('syllabus') || names.includes('curriculum')) return 'EXTRACT_SYLLABUS';
-    if (m.includes('timetable') || m.includes('exam') || m.includes('schedule')) return 'EXTRACT_TIMETABLE';
-    if (m.includes('syllabus') || m.includes('topic') || m.includes('chapter') || m.includes('module')) return 'EXTRACT_SYLLABUS';
-    return 'EXTRACT_TIMETABLE';
+  // Attachments or explicit text syllabus/timetable input
+  if (hasAttachments || isSyllabusOrTimetableInput(m)) {
+    return 'EXTRACT_DATA';
   }
 
   // Explicit tool execution commands
@@ -236,58 +267,70 @@ function handleClearAllData(): AgentResponse {
 // Gemini multimodal extraction for images/documents
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function extractFromFiles(
-  request: AgentRequest,
-  intent: IntentType
-): Promise<AgentResponse> {
+// ──────────────────────────────────────────────────────────────────────────────
+// Unified Extraction Engine for Syllabus Topics & Exam Timetable (Text & Files)
+// ──────────────────────────────────────────────────────────────────────────────
+
+async function extractSyllabusAndTimetable(request: AgentRequest): Promise<AgentResponse> {
+  const groq = getGroqClient();
   const gemini = getGeminiClient();
 
-  const systemPrompt = intent === 'EXTRACT_TIMETABLE'
-    ? `You are an academic timetable parser. Extract ALL exam/test entries from the provided image or document. 
-Return ONLY a valid JSON object in this exact format, no markdown fences:
-{
-  "exams": [
-    { "name": "Subject Name", "date": "YYYY-MM-DD", "time": "HH:MM AM/PM", "subjectName": "Subject Name" }
-  ],
-  "confidence": "high|medium|low",
-  "notes": "any relevant notes about ambiguous data"
-}
-Use YYYY-MM-DD for all dates. If year is not specified, use 2026.`
-    : `You are an academic syllabus parser. Extract ALL subjects, chapters, and topics from the provided document.
-Return ONLY a valid JSON object in this exact format, no markdown fences:
-{
-  "topics": [
-    { "subjectName": "Subject Name", "title": "Topic Title", "priority": "HIGH|MEDIUM|LOW" }
-  ],
-  "confidence": "high|medium|low",
-  "notes": "any relevant notes"
-}`;
-
-  if (!gemini && !getGroqClient()) {
-    return {
-      message: `> EXTRACTION UNAVAILABLE\n\nAI extraction requires a valid Gemini or Groq API key.\n\nPlease add your data manually or check your .env configuration.`,
-      fallback: true,
-    };
+  // Combine text from message and text attachments
+  let combinedText = request.message || '';
+  for (const att of request.attachments || []) {
+    if (att.mimeType?.startsWith('text/') || att.mimeType?.includes('csv') || att.mimeType?.includes('json')) {
+      try {
+        const decoded = Buffer.from(att.base64Data, 'base64').toString('utf-8');
+        combinedText += `\n\n--- Attachment: ${att.name} ---\n${decoded.slice(0, 10000)}`;
+      } catch {
+        // ignore decode error
+      }
+    }
   }
 
-  if (gemini) {
+  const extractionPrompt = `You are an academic syllabus and exam timetable parser for the Revisionly study planner app.
+Extract ALL exams/tests and ALL syllabus topics/chapters from the user's text and/or document below:
+"""
+${combinedText.slice(0, 15000)}
+"""
+
+Return ONLY a valid JSON object in this exact format with NO markdown wrapping or commentary:
+{
+  "exams": [
+    { "name": "Subject or Exam Name", "date": "YYYY-MM-DD", "time": "HH:MM AM/PM", "subjectName": "Subject Name" }
+  ],
+  "topics": [
+    { "subjectName": "Subject Name", "title": "Topic or Chapter Title", "priority": "HIGH|MEDIUM|LOW" }
+  ]
+}
+
+Rules:
+1. Always format dates as YYYY-MM-DD. If year is missing, assume 2026. If time is missing, default to "09:00 AM".
+2. Group topics under their respective subjectName. If subjectName is not explicitly stated, infer the closest subject or use "General Course".
+3. If no exams are found, return "exams": [].
+4. If no topics are found, return "topics": [].
+5. Do not invent topics or exams that are not present in the text.`;
+
+  // 1. Try Gemini if image attachments are present
+  const hasImages = request.attachments?.some(a => a.mimeType?.startsWith('image/') || a.mimeType?.includes('pdf'));
+  if (gemini && hasImages) {
     try {
       const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-        { text: systemPrompt },
-        { text: `\n\nUser message: "${request.message}"\n\nExtract from the attached file(s):` },
+        { text: extractionPrompt },
       ];
-
       for (const att of request.attachments || []) {
-        parts.push({
-          inlineData: {
-            mimeType: att.mimeType,
-            data: att.base64Data,
-          },
-        });
+        if (att.base64Data) {
+          parts.push({
+            inlineData: {
+              mimeType: att.mimeType,
+              data: att.base64Data,
+            },
+          });
+        }
       }
 
       const result = await gemini.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.8-flash',
         contents: [{ role: 'user', parts }],
       });
 
@@ -295,85 +338,88 @@ Return ONLY a valid JSON object in this exact format, no markdown fences:
       const cleaned = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const parsed = JSON.parse(cleaned);
 
-      if (intent === 'EXTRACT_TIMETABLE' && parsed.exams) {
-        const count = parsed.exams.length;
-        const preview = parsed.exams.slice(0, 3).map((e: any) => `• **${e.name}** — ${e.date} at ${e.time}`).join('\n');
-        const more = count > 3 ? `\n• ...and ${count - 3} more` : '';
-        const confidence = parsed.confidence === 'low' ? '\n\n⚠️ Some dates may need review.' : '';
+      const parsedExams = Array.isArray(parsed.exams) ? parsed.exams : [];
+      const parsedTopics = Array.isArray(parsed.topics) ? parsed.topics : [];
 
-        return {
-          message: `> TIMETABLE EXTRACTED\n\nI found **${count} exam(s)**:\n\n${preview}${more}${confidence}\n\nReview and import them into your schedule:`,
-          extractedExams: parsed.exams,
-          tool: { name: 'import_exams', params: { exams: parsed.exams } },
-        };
+      if (parsedExams.length > 0 || parsedTopics.length > 0) {
+        return buildExtractionResponse(parsedExams, parsedTopics);
       }
-
-      if (intent === 'EXTRACT_SYLLABUS' && parsed.topics) {
-        const count = parsed.topics.length;
-        const subjects = [...new Set(parsed.topics.map((t: any) => t.subjectName))];
-        const preview = subjects.slice(0, 4).map((s: any) => `• ${s}`).join('\n');
-        const more = subjects.length > 4 ? `\n• ...and ${subjects.length - 4} more subjects` : '';
-
-        return {
-          message: `> SYLLABUS EXTRACTED\n\nI found **${count} topic(s)** across **${subjects.length} subject(s)**:\n\n${preview}${more}\n\nReady to import into your syllabus:`,
-          extractedTopics: parsed.topics,
-          tool: { name: 'import_topics', params: { topics: parsed.topics } },
-        };
-      }
-
-      return {
-        message: `> EXTRACTED\n\nHere's what I found from your file:\n\n${rawText.slice(0, 500)}`,
-      };
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : 'Extraction failed';
-      console.warn('[Agent] Gemini extraction error:', errMsg);
+      console.warn('[Agent] Gemini extraction error (falling back to Groq):', err instanceof Error ? err.message : err);
     }
   }
 
-  // Fallback: try Groq text-only (images won't work but PDFs might have text)
-  const groq = getGroqClient();
-  if (groq && request.attachments?.some(a => a.mimeType === 'text/plain')) {
-    try {
-      const textContent = Buffer.from(
-        request.attachments.find(a => a.mimeType === 'text/plain')!.base64Data,
-        'base64'
-      ).toString('utf-8');
+  // 2. Fast, resilient Groq extraction (works on all text, pasted syllabus, notes, timetable details)
+  if (groq) {
+    const modelsToTry = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
+    for (const model of modelsToTry) {
+      try {
+        const result = await groq.chat.completions.create({
+          model,
+          messages: [
+            { role: 'user', content: extractionPrompt },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.1,
+          max_tokens: 1500,
+        });
 
-      const result = await groq.chat.completions.create({
-        model: 'qwen/qwen3.8-27b',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Extract from this text:\n\n${textContent.slice(0, 3000)}` },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.1,
-      });
+        const raw = result.choices[0]?.message?.content || '{}';
+        const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        const parsed = JSON.parse(cleaned);
 
-      const raw = result.choices[0]?.message?.content || '{}';
-      const parsed = JSON.parse(raw);
+        const parsedExams = Array.isArray(parsed.exams) ? parsed.exams : [];
+        const parsedTopics = Array.isArray(parsed.topics) ? parsed.topics : [];
 
-      if (intent === 'EXTRACT_TIMETABLE' && parsed.exams) {
-        return {
-          message: `> TIMETABLE EXTRACTED\n\nFound **${parsed.exams.length} exam(s)** from your document.`,
-          extractedExams: parsed.exams,
-          tool: { name: 'import_exams', params: { exams: parsed.exams } },
-        };
+        if (parsedExams.length > 0 || parsedTopics.length > 0) {
+          return buildExtractionResponse(parsedExams, parsedTopics);
+        }
+      } catch (err: unknown) {
+        console.warn(`[Agent] Groq extraction error on ${model}:`, err instanceof Error ? err.message : err);
       }
-      if (intent === 'EXTRACT_SYLLABUS' && parsed.topics) {
-        return {
-          message: `> SYLLABUS EXTRACTED\n\nFound **${parsed.topics.length} topic(s)** from your document.`,
-          extractedTopics: parsed.topics,
-          tool: { name: 'import_topics', params: { topics: parsed.topics } },
-        };
-      }
-    } catch (err: unknown) {
-      console.warn('[Agent] Groq fallback extraction error:', err instanceof Error ? err.message : err);
     }
   }
 
+  // If nothing was extracted from input, let general chat handle the query
+  return handleGeneralChat(request);
+}
+
+function buildExtractionResponse(
+  exams: Array<{ name: string; date: string; time: string; subjectName?: string }>,
+  topics: Array<{ subjectName: string; title: string; priority?: string }>
+): AgentResponse {
+  const hasExams = exams.length > 0;
+  const hasTopics = topics.length > 0;
+
+  if (hasExams && hasTopics) {
+    const subjects = [...new Set(topics.map(t => t.subjectName))];
+    const examPreview = exams.slice(0, 3).map(e => `• **${e.name}** — ${e.date} at ${e.time}`).join('\n');
+    const topicPreview = topics.slice(0, 4).map(t => `• [${t.subjectName}] ${t.title}`).join('\n');
+
+    return {
+      message: `> SYLLABUS & TIMETABLE DETECTED\n\nI successfully parsed your input:\n\n**Exams (${exams.length}):**\n${examPreview}${exams.length > 3 ? `\n• ...and ${exams.length - 3} more` : ''}\n\n**Syllabus (${topics.length} topics across ${subjects.length} subject(s)):**\n${topicPreview}${topics.length > 4 ? `\n• ...and ${topics.length - 4} more` : ''}\n\nClick **IMPORT ALL** below to add these to your syllabus and recalculate your study schedule.`,
+      extractedExams: exams,
+      extractedTopics: topics,
+      tool: { name: 'import_syllabus_and_timetable', params: { exams, topics } },
+    };
+  }
+
+  if (hasTopics) {
+    const subjects = [...new Set(topics.map(t => t.subjectName))];
+    const topicPreview = topics.slice(0, 5).map(t => `• [${t.subjectName}] ${t.title}`).join('\n');
+
+    return {
+      message: `> SYLLABUS TOPICS DETECTED\n\nI found **${topics.length} topic(s)** across **${subjects.length} subject(s)**:\n\n${topicPreview}${topics.length > 5 ? `\n• ...and ${topics.length - 5} more` : ''}\n\nClick **IMPORT ${topics.length} TOPICS** below to add them directly to your syllabus.`,
+      extractedTopics: topics,
+      tool: { name: 'import_topics', params: { topics } },
+    };
+  }
+
+  const examPreview = exams.slice(0, 5).map(e => `• **${e.name}** — ${e.date} at ${e.time}`).join('\n');
   return {
-    message: `> READING FILE\n\nI received your file(s).\n\nFor best results:\n- Image files need the Gemini API key configured\n- Text-based PDFs work with the current setup\n\nPlease add your Gemini API key in Settings to enable full multimodal support.`,
-    fallback: true,
+    message: `> EXAM TIMETABLE DETECTED\n\nI found **${exams.length} exam(s)**:\n\n${examPreview}${exams.length > 5 ? `\n• ...and ${exams.length - 5} more` : ''}\n\nClick **IMPORT ALL** below to add these to your schedule.`,
+    extractedExams: exams,
+    tool: { name: 'import_exams', params: { exams } },
   };
 }
 
@@ -383,7 +429,8 @@ Return ONLY a valid JSON object in this exact format, no markdown fences:
 
 /**
  * Intelligent dynamic contextual engine when Groq is offline or API key is absent
- * Generates rich, varied, and personalized replies tailored to user query and timetable context
+ * Only provides schedule telemetry if the user specifically asked about their timetable/progress.
+ * Never hijacks general knowledge questions with fake study tips.
  */
 function generateDynamicContextualReply(
   query: string,
@@ -410,28 +457,24 @@ function generateDynamicContextualReply(
   if (
     q.includes('what to study') ||
     q.includes('what should i study') ||
-    q.includes('highest priority') ||
-    q.includes('start study') ||
+    q.includes('highest priority topic') ||
     q.includes('where do i start') ||
-    q.includes('recommend') ||
-    q.includes('study now')
+    q === 'study now'
   ) {
     if (!targetTopic) {
       return `### 🎯 Syllabus Complete!\n\nAll registered topics are marked complete (${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0}).\n\n**Recommended Next Action:**\n* Run a full mock test for **${nextExam ? nextExam.name : 'your upcoming exam'}**.\n* Create active-recall flashcards for high-yield formulas and definitions.`;
     }
 
-    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (45-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for 45 minutes with zero notifications.*`;
+    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (${ctx.sessionDuration || 45}-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for ${ctx.sessionDuration || 45} minutes with zero notifications.*`;
   }
 
   // 2. Progress / How much syllabus completed / Status
   if (
-    q.includes('progress') ||
-    q.includes('how much') ||
-    q.includes('percentage') ||
-    q.includes('syllabus') ||
-    q.includes('completed') ||
-    q.includes('readiness') ||
-    q.includes('status')
+    q.includes('my progress') ||
+    q.includes('syllabus progress') ||
+    q.includes('how much syllabus') ||
+    q.includes('syllabus coverage') ||
+    q.includes('readiness status')
   ) {
     const remainingCount = pendingTopics.length;
     const paceNeeded = daysToNextExam > 0 ? (remainingCount / daysToNextExam).toFixed(1) : remainingCount;
@@ -447,11 +490,11 @@ function generateDynamicContextualReply(
 
   // 3. Next Exam / Exam Schedule / Timetable countdown
   if (
-    q.includes('next exam') ||
-    q.includes('exam') ||
-    q.includes('date') ||
-    q.includes('when is') ||
-    q.includes('countdown')
+    q === 'next exam' ||
+    q === 'when is my next exam' ||
+    q.includes('exam countdown') ||
+    q.includes('exam schedule') ||
+    q.includes('exam timetable')
   ) {
     if (!ctx.exams || ctx.exams.length === 0) {
       return `### 📅 No Exams Recorded Yet\n\nPlease add your exam dates in the **Exams** tab or type them here (e.g. *"Maths exam on Oct 5 at 9am"*). I'll automatically generate your countdown and revision timetable.`;
@@ -469,11 +512,9 @@ function generateDynamicContextualReply(
 
   // 4. Missed sessions / I missed yesterday / Catch up
   if (
-    q.includes('missed') ||
-    q.includes('yesterday') ||
-    q.includes('catch up') ||
-    q.includes('behind') ||
-    q.includes('late')
+    q.includes('missed yesterday') ||
+    q.includes('missed sessions') ||
+    q.includes('catch up on missed')
   ) {
     if (!ctx.missedTasks || ctx.missedTasks.length === 0) {
       return `### ✅ Perfect Discipline!\n\nZero overdue study sessions detected for today (${ctx.referenceDate}). Your revision schedule is completely synchronized and on track.`;
@@ -483,38 +524,24 @@ function generateDynamicContextualReply(
     return `### 🔄 Missed Sessions Detected (${ctx.missedTasks.length})\n\n${missedList}\n\n**Recovery Protocol:**\nClick **"I MISSED A DAY"** or use the **Daily Check-In** dialog to trigger autonomous rebalancing. Your remaining study slots will be dynamically recalculated without overflowing your daily study limit.`;
   }
 
-  // 5. Study techniques / Feynman / Pomodoro / Active recall / Tips
-  if (
-    q.includes('feynman') ||
-    q.includes('pomodoro') ||
-    q.includes('active recall') ||
-    q.includes('spaced repetition') ||
-    q.includes('how to study') ||
-    q.includes('technique') ||
-    q.includes('method')
-  ) {
-    return `### 🧠 Elite Revision Techniques\n\n1. **The Feynman Technique (Concept Mastery):**\n   Pick a complex topic (e.g., *${targetTopic?.title || 'Data Structures'}*) and explain it on paper in plain English as if teaching a 10-year-old. Identify gaps where you rely on jargon, re-study those gaps, and simplify.\n\n2. **Active Recall & Blurting (Memory Retention):**\n   Close books and write everything you know from memory for 15 minutes. Highlight what you forgot in red.\n\n3. **Spaced Retrieval Intervals:**\n   Review new material on Day 1, Day 3, and Day 7 to cement neural pathways before exam day.`;
-  }
-
-  // 6. Greetings / Introduction / Help
+  // 5. Greetings / Help
   if (
     q === 'hi' ||
     q === 'hello' ||
     q === 'hey' ||
     q.startsWith('hi ') ||
     q.startsWith('hello ') ||
-    q === 'who are you' ||
-    q.includes('help me')
+    q === 'who are you'
   ) {
-    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your live academic planner and exam strategist.\n\n**Current Live Snapshot:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0} topics** complete (${ctx.overallProgressPercent || 0}%)\n* **Daily Study Window:** **${ctx.dailyHours || 3} hours/day**\n\n**Try asking:**\n* *"What should I study right now?"*\n* *"How much syllabus do I have left?"*\n* *"Explain the Feynman technique"*\n* Or upload a timetable image / syllabus PDF!`;
+    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your academic mentor and revision strategist.\n\n**Live Status:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${ctx.completedCount || 0}/${ctx.totalTopicsCount || 0} topics** complete (${ctx.overallProgressPercent || 0}%)\n* **Daily Study Window:** **${ctx.dailyHours || 3} hours/day**\n\nAsk me any concept question, homework problem, study advice, or ask me to adjust your timetable!`;
   }
 
-  // 7. General Academic Coaching & Guidance
-  return `### 💡 Academic Strategy (${nextExam ? nextExam.name : 'Revisionly'})\n\nRegarding: *"${query}"*\n\n**Key Strategic Guidance:**\n* **Focus Target:** Direct your prime energy towards **${targetTopic ? targetTopic.title : 'high-yield concepts'}** for your upcoming exam.\n* **Time Management:** Break study time into **${ctx.sessionDuration || 45}-minute** focused intervals followed by 10-minute active breaks.\n* **Self-Testing:** Spend at least 60% of study time on active recall questions rather than passive reading.\n\nNeed to adjust your timetable? Type *"Rebuild my plan"* or specify *"I can study 4 hours a day"*.`;
+  // 6. Honest offline fallback for any question/query
+  return `### ⚠️ AI Assistant Offline\n\nI couldn't reach the AI language model to answer: *"${query}"*.\n\n**Possible solutions:**\n1. Ensure your device is connected to the internet.\n2. Verify that your **GROQ_API_KEY** is configured and active in Settings or \`.env\`.\n3. If asking about your schedule, try: *"What should I study now?"*, *"When is my next exam?"*, or *"Show my progress"*.`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// LLM General Chat (contextual, not refusal-based)
+// LLM General Chat (Answers user's actual question directly)
 // ──────────────────────────────────────────────────────────────────────────────
 
 async function handleGeneralChat(request: AgentRequest): Promise<AgentResponse> {
@@ -534,23 +561,26 @@ async function handleGeneralChat(request: AgentRequest): Promise<AgentResponse> 
     ? ctx.tasks.filter(t => t.date === ctx.referenceDate).map(t => `${t.topicTitle} [${t.status}]`).join('; ')
     : 'No tasks allocated for today';
 
-  const systemPrompt = `You are REVISIONLY AI — an elite academic planning and study coaching agent embedded in the Revisionly study planner app.
+  const systemPrompt = `You are REVISIONLY AI — an expert academic mentor, study coach, and tutor embedded in the Revisionly study planner app.
 
-STUDENT PROFILE & LIVE CONTEXT:
-- Today's Date: ${ctx.referenceDate}
-- Exams Scheduled: ${examsSummary}
+CORE DIRECTIVE:
+1. ALWAYS ANSWER THE USER'S QUESTION DIRECTLY, ACCURATELY, AND FULLY FIRST.
+2. If the user asks about ANY academic subject, concept, theory, formula, code, definition, history, science, math, or study technique:
+   - Provide a clear, high-quality, comprehensive, and pedagogical explanation.
+   - Use clear formatting (markdown, bold text, bullet points, math equations where helpful).
+   - NEVER deflect, pivot away, or ignore the question.
+   - NEVER say "this is not in your syllabus" unless the user explicitly asked if something is in their syllabus.
+3. If the user asks about their study plan, timetable, what to study next, or how they are doing:
+   - Use the STUDENT PROFILE context below to give specific, actionable, encouraging advice.
+4. Keep explanations engaging, concise yet thorough, and directly relevant to what was asked.
+
+STUDENT PROFILE & LIVE CONTEXT (Reference when relevant to their schedule or exams):
+- Reference Date: ${ctx.referenceDate}
+- Registered Exams: ${examsSummary}
 - Syllabus Coverage: ${topicsSummary}
 - Daily Study Availability: ${ctx.dailyHours || 3} hours/day
-- Missed Revision Sessions: ${missedSummary}
-- Scheduled Tasks for Today: ${todayTasksSummary}
-
-YOUR ROLE & INSTRUCTIONS:
-- You are speaking directly to a student. Be supportive, concise, analytically sharp, and highly actionable.
-- NEVER give generic, repetitive, or canned responses. Always tailor your reply specifically to what the student is asking right now.
-- If asked "What to study now?" or "What should I study?": Check their earliest upcoming exam and pending topics. Recommend a concrete study session with duration and active recall strategy.
-- If asked about progress: Give a direct, encouraging evaluation with realistic countdown guidance.
-- If they ask general academic or study questions (e.g., explaining a concept, study techniques like Feynman or Pomodoro), explain clearly and concisely.
-- Keep responses readable using clean formatting (bullet points, bold text). Keep under 200 words unless a detailed breakdown is requested.`;
+- Missed Sessions: ${missedSummary}
+- Today's Tasks: ${todayTasksSummary}`;
 
   if (!groq) {
     return {
@@ -558,38 +588,46 @@ YOUR ROLE & INSTRUCTIONS:
     };
   }
 
-  try {
-    const messages: Groq.Chat.ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      ...request.history.slice(-10).map(h => ({
-        role: h.role as 'user' | 'assistant',
-        content: h.content,
-      })),
-      { role: 'user', content: request.message },
-    ];
+  // Filter out any empty history messages to prevent API errors
+  const cleanHistory = (request.history || [])
+    .filter(h => h && typeof h.content === 'string' && h.content.trim().length > 0)
+    .slice(-10)
+    .map(h => ({
+      role: h.role as 'user' | 'assistant',
+      content: h.content.trim(),
+    }));
 
-    const result = await groq.chat.completions.create({
-      model: 'qwen/qwen3.8-27b',
-      messages,
-      temperature: 0.7,
-      max_tokens: 500,
-    });
+  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemPrompt },
+    ...cleanHistory,
+    { role: 'user', content: request.message },
+  ];
 
-    const replyContent = result.choices[0]?.message?.content?.trim();
-    if (replyContent && replyContent.length > 0) {
-      return { message: replyContent };
+  // Try primary model (qwen/qwen3.8-27b), fallback to (openai/gpt-oss-120b)
+  const modelsToTry = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
+
+  for (const model of modelsToTry) {
+    try {
+      const result = await groq.chat.completions.create({
+        model,
+        messages,
+        temperature: 0.6,
+        max_tokens: 800,
+      });
+
+      const replyContent = result.choices[0]?.message?.content?.trim();
+      if (replyContent && replyContent.length > 0) {
+        return { message: replyContent };
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Agent] Chat error with ${model}:`, errMsg);
     }
-
-    return {
-      message: generateDynamicContextualReply(request.message, ctx),
-    };
-  } catch (err: unknown) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.warn('[Agent] Chat error from Groq, using dynamic contextual fallback:', errMsg);
-    return {
-      message: generateDynamicContextualReply(request.message, ctx),
-    };
   }
+
+  return {
+    message: generateDynamicContextualReply(request.message, ctx),
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -624,8 +662,7 @@ export async function runAgent(request: AgentRequest): Promise<AgentResponse> {
     case 'REBUILD_PLAN':      return handleRebuildPlan();
     case 'RESCHEDULE_MISSED': return handleRescheduleMissed(ctx);
     case 'UPDATE_HOURS':      return handleUpdateHours(message);
-    case 'EXTRACT_TIMETABLE':
-    case 'EXTRACT_SYLLABUS':  return extractFromFiles({ ...req, message, context: ctx, history: req.history || [] }, intent);
+    case 'EXTRACT_DATA':      return extractSyllabusAndTimetable({ ...req, message, context: ctx, history: req.history || [] });
     default:                  return handleGeneralChat({ ...req, message, context: ctx, history: req.history || [] });
   }
 }

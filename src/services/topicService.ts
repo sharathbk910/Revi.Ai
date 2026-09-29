@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
+import { subjectService } from './subjectService';
 import type { Topic } from '../types';
 
 export const topicService = {
@@ -37,11 +38,18 @@ export const topicService = {
   async createTopic(userId: string, topic: Omit<Topic, 'id' | 'completed'>): Promise<Topic | null> {
     if (!isSupabaseConfigured() || !userId) return null;
 
+    // Resolve or generate valid subject UUID in Supabase
+    const validSubjectId = await subjectService.ensureSubject(userId, topic.subjectId, topic.subjectName);
+    if (!validSubjectId) {
+      console.error('[topicService] Could not resolve subject for topic:', topic);
+      return null;
+    }
+
     const { data, error } = await supabase
       .from('topics')
       .insert({
         user_id: userId,
-        subject_id: topic.subjectId,
+        subject_id: validSubjectId,
         title: topic.title,
         estimated_minutes: topic.estimatedMinutes,
         priority: topic.priority,
@@ -80,9 +88,15 @@ export const topicService = {
   ): Promise<Topic[]> {
     if (!isSupabaseConfigured() || !userId || titles.length === 0) return [];
 
+    const validSubjectId = await subjectService.ensureSubject(userId, subjectId, subjectName);
+    if (!validSubjectId) {
+      console.error('[topicService] Could not resolve subject for bulk topics');
+      return [];
+    }
+
     const rows = titles.map((title, idx) => ({
       user_id: userId,
-      subject_id: subjectId,
+      subject_id: validSubjectId,
       title,
       estimated_minutes: 45,
       priority: 'MEDIUM',
@@ -115,6 +129,29 @@ export const topicService = {
       priority: d.priority,
       completed: false,
     }));
+  },
+
+  async updateTopic(userId: string, topicId: string, updates: Partial<Topic>): Promise<boolean> {
+    if (!isSupabaseConfigured() || !userId) return false;
+
+    const payload: Record<string, any> = {};
+    if (updates.title) payload.title = updates.title;
+    if (updates.estimatedMinutes) payload.estimated_minutes = updates.estimatedMinutes;
+    if (updates.priority) payload.priority = updates.priority;
+
+    if (Object.keys(payload).length === 0) return true;
+
+    const { error } = await supabase
+      .from('topics')
+      .update(payload)
+      .eq('id', topicId)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('[topicService] Error updating topic:', error);
+      return false;
+    }
+    return true;
   },
 
   async toggleTopicCompletion(userId: string, topicId: string, completed: boolean): Promise<boolean> {

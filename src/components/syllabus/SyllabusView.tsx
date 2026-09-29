@@ -15,8 +15,28 @@ export const SyllabusView: React.FC<SyllabusViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   const subjectGroups = useMemo(() => {
-    return subjects.map((sub, idx) => {
-      const subTopics = topics.filter(t => t.subjectId === sub.id);
+    const subjectMap = new Map<string, typeof subjects[0]>();
+    for (const sub of subjects) {
+      subjectMap.set(sub.id, sub);
+    }
+    // Also capture any subject from topics so topics are never invisible
+    for (const topic of topics) {
+      if (!subjectMap.has(topic.subjectId)) {
+        subjectMap.set(topic.subjectId, {
+          id: topic.subjectId,
+          name: topic.subjectName || 'General Academic Course',
+          color: '#00ff88',
+          code: (topic.subjectName || 'SUB').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'SUB',
+        });
+      }
+    }
+
+    const allSubs = Array.from(subjectMap.values());
+
+    return allSubs.map((sub, idx) => {
+      const subTopics = topics.filter(
+        t => t.subjectId === sub.id || (t.subjectName && t.subjectName.toLowerCase() === sub.name.toLowerCase())
+      );
       const filtered = searchQuery.trim()
         ? subTopics.filter(t => t.title.toLowerCase().includes(searchQuery.toLowerCase()))
         : subTopics;
@@ -49,7 +69,7 @@ export const SyllabusView: React.FC<SyllabusViewProps> = ({
               SYLLABUS.
             </h1>
             <div className="font-mono text-xs sm:text-sm text-[var(--muted-foreground)] mt-3">
-              {topics.length} total concepts across {subjects.length} academic courses
+              {topics.length} total concepts across {subjectGroups.length} academic courses
             </div>
           </div>
 
@@ -86,6 +106,29 @@ export const SyllabusView: React.FC<SyllabusViewProps> = ({
       </section>
 
       {/* Structured Editorial Checklist Groups */}
+      {subjectGroups.length === 0 ? (
+        <div className="border border-[var(--border)] bg-[var(--card)] p-12 text-center space-y-4 font-mono">
+          <div className="text-xs uppercase text-[var(--muted-foreground)] tracking-wider">
+            SYLLABUS DIRECTORY EMPTY
+          </div>
+          <div className="font-display text-2xl text-[var(--foreground)] uppercase">
+            NO SYLLABUS TOPICS RECORDED YET
+          </div>
+          <p className="text-xs text-[var(--muted-foreground)] max-w-md mx-auto">
+            Add topics manually or bulk paste your syllabus topics below to immediately generate your revision schedule.
+          </p>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button onClick={() => onOpenAddTopic()} className="btn-primary text-xs">
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Topic</span>
+            </button>
+            <button onClick={() => onOpenBulkImport()} className="btn-secondary text-xs">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Bulk Import</span>
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-12">
         {subjectGroups.map(group => {
           const { number, subject, displayedTopics, completed, total, progressPercent } = group;
@@ -188,7 +231,8 @@ export const SyllabusView: React.FC<SyllabusViewProps> = ({
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

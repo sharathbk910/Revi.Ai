@@ -106,20 +106,50 @@ type IntentType =
   | 'REBUILD_PLAN'
   | 'RESCHEDULE_MISSED'
   | 'UPDATE_HOURS'
-  | 'EXTRACT_TIMETABLE'
-  | 'EXTRACT_SYLLABUS'
+  | 'EXTRACT_DATA'
   | 'GENERAL_CHAT';
 
-function classifyIntent(message: string, hasAttachments: boolean, attachmentNames: string[]): IntentType {
+function isSyllabusOrTimetableInput(m: string): boolean {
+  const lower = m.toLowerCase().trim();
+  if (
+    lower.startsWith('how much') ||
+    lower.startsWith('what should i') ||
+    lower.startsWith('when is my next') ||
+    lower === 'what to study' ||
+    lower === 'study now' ||
+    lower === 'show my progress' ||
+    lower === 'my progress'
+  ) {
+    return false;
+  }
+
+  const indicators = [
+    'syllabus', 'timetable', 'curriculum',
+    'add topic', 'add topics', 'import topic', 'import topics',
+    'update topic', 'update topics', 'update syllabus',
+    'add exam', 'add exams', 'import exam', 'import exams',
+    'my topics', 'these topics', 'here is my syllabus', 'here are my topics',
+    'here is my timetable', 'my timetable is', 'my syllabus is',
+    'exam date', 'exam schedule', 'chapter', 'modules', 'unit 1', 'unit 2'
+  ];
+
+  if (indicators.some(ind => lower.includes(ind))) return true;
+
+  const lines = m.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length >= 3) {
+    const listLines = lines.filter(l => /^[*-•\d+.]/i.test(l));
+    if (listLines.length >= 2) return true;
+  }
+
+  return false;
+}
+
+function classifyIntent(message: string, hasAttachments: boolean, _attachmentNames?: string[]): IntentType {
   const m = message.toLowerCase().trim();
 
-  // File uploads
-  if (hasAttachments) {
-    const names = attachmentNames.map(n => n.toLowerCase()).join(' ');
-    if (names.includes('syllabus') || names.includes('curriculum') || names.includes('topics')) {
-      return 'EXTRACT_SYLLABUS';
-    }
-    return 'EXTRACT_TIMETABLE';
+  // Attachments or explicit text syllabus/timetable input
+  if (hasAttachments || isSyllabusOrTimetableInput(m)) {
+    return 'EXTRACT_DATA';
   }
 
   // Explicit action commands only (never hijack conversation/questions)
@@ -204,45 +234,65 @@ async function callGroqDirect(
       ? context.tasks.filter(t => t.date === context.referenceDate).map(t => `${t.topicTitle} [${t.status}]`).join('; ')
       : 'No tasks allocated for today';
 
-    const systemPrompt = `You are REVISIONLY AI — an elite academic planning and study coaching agent embedded in the Revisionly study planner app.
+    const systemPrompt = `You are REVISIONLY AI — an expert academic mentor, study coach, and tutor embedded in the Revisionly study planner app.
 
-STUDENT PROFILE & LIVE CONTEXT:
-- Today's Date: ${context.referenceDate}
-- Exams Scheduled: ${examsSummary}
+CORE DIRECTIVE:
+1. ALWAYS ANSWER THE USER'S QUESTION DIRECTLY, ACCURATELY, AND FULLY FIRST.
+2. If the user asks about ANY academic subject, concept, theory, formula, code, definition, history, science, math, or study technique:
+   - Provide a clear, high-quality, comprehensive, and pedagogical explanation.
+   - Use clear formatting (markdown, bold text, bullet points, math equations where helpful).
+   - NEVER deflect, pivot away, or ignore the question.
+   - NEVER say "this is not in your syllabus" unless the user explicitly asked if something is in their syllabus.
+3. If the user asks about their study plan, timetable, what to study next, or how they are doing:
+   - Use the STUDENT PROFILE context below to give specific, actionable, encouraging advice.
+4. Keep explanations engaging, concise yet thorough, and directly relevant to what was asked.
+
+STUDENT PROFILE & LIVE CONTEXT (Reference when relevant to their schedule or exams):
+- Reference Date: ${context.referenceDate}
+- Registered Exams: ${examsSummary}
 - Syllabus Coverage: ${topicsSummary}
 - Daily Study Availability: ${context.dailyHours || 3} hours/day
-- Missed Revision Sessions: ${missedSummary}
-- Scheduled Tasks for Today: ${todayTasksSummary}
+- Missed Sessions: ${missedSummary}
+- Today's Tasks: ${todayTasksSummary}`;
 
-YOUR ROLE & INSTRUCTIONS:
-- You are speaking directly to a student. Be supportive, concise, analytically sharp, and highly actionable.
-- NEVER give generic, repetitive, or canned responses. Always tailor your reply specifically to what the student is asking right now.
-- If asked "What to study now?" or "What should I study?": Check their earliest upcoming exam and pending topics. Recommend a concrete study session with duration and active recall strategy.
-- If asked about progress: Give a direct, encouraging evaluation with realistic countdown guidance.
-- If they ask general academic or study questions (e.g., explaining a concept, study techniques like Feynman or Pomodoro), explain clearly and concisely.
-- Keep responses readable using clean formatting (bullet points, bold text). Keep under 200 words unless a detailed breakdown is requested.`;
+    const cleanHistory = (history || [])
+      .filter(h => h && typeof h.content === 'string' && h.content.trim().length > 0)
+      .slice(-10)
+      .map(h => ({ role: h.role, content: h.content.trim() }));
 
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'qwen/qwen3.8-27b',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          ...history.slice(-10).map(h => ({ role: h.role, content: h.content })),
-          { role: 'user', content: message },
-        ],
-        temperature: 0.7,
-        max_tokens: 500,
-      }),
-    });
+    const modelsToTry = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
 
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content?.trim() || null;
+    for (const model of modelsToTry) {
+      try {
+        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              ...cleanHistory,
+              { role: 'user', content: message },
+            ],
+            temperature: 0.6,
+            max_tokens: 800,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.choices?.[0]?.message?.content?.trim();
+          if (content && content.length > 0) return content;
+        }
+      } catch {
+        // try next model
+      }
+    }
+
+    return null;
   } catch (err) {
     console.info('[Agent] Direct Groq fetch error (will use smart contextual engine):', err);
     return null;
@@ -251,7 +301,8 @@ YOUR ROLE & INSTRUCTIONS:
 
 /**
  * Intelligent dynamic contextual engine when offline or API key is absent
- * Generates rich, varied, and personalized replies tailored to user query and timetable context
+ * Only provides schedule telemetry if the user specifically asked about their timetable/progress.
+ * Never hijacks general knowledge questions with fake study tips.
  */
 function generateDynamicContextualReply(
   query: string,
@@ -278,28 +329,24 @@ function generateDynamicContextualReply(
   if (
     q.includes('what to study') ||
     q.includes('what should i study') ||
-    q.includes('highest priority') ||
-    q.includes('start study') ||
+    q.includes('highest priority topic') ||
     q.includes('where do i start') ||
-    q.includes('recommend') ||
-    q.includes('study now')
+    q === 'study now'
   ) {
     if (!targetTopic) {
       return `### 🎯 Syllabus Complete!\n\nAll registered topics are marked complete (${context.completedCount}/${context.totalTopicsCount}).\n\n**Recommended Next Action:**\n* Run a full mock test for **${nextExam ? nextExam.name : 'your upcoming exam'}**.\n* Create active-recall flashcards for high-yield formulas and definitions.`;
     }
 
-    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (45-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for 45 minutes with zero notifications.*`;
+    return `### 🎯 Immediate Priority: **${targetTopic.title}** (${targetTopic.subjectName})\n\nWith **${daysToNextExam} day(s)** until your **${nextExam ? nextExam.name : 'next exam'}**, this is your highest leverage topic right now.\n\n**Action Plan (${context.sessionDuration || 45}-Minute Focus Block):**\n1. **25 min — Active Retrieval:** Read the core formulas/concepts, then close your notes and write out everything you remember (blurting method).\n2. **15 min — Targeted Practice:** Solve 3–5 exam-style questions specifically on *${targetTopic.title}*.\n3. **5 min — Error Log:** Document mistakes in your revision notes to prevent repeat errors.\n\n*Lock in for ${context.sessionDuration || 45} minutes with zero notifications.*`;
   }
 
   // 2. Progress / How much syllabus completed / Status
   if (
-    q.includes('progress') ||
-    q.includes('how much') ||
-    q.includes('percentage') ||
-    q.includes('syllabus') ||
-    q.includes('completed') ||
-    q.includes('readiness') ||
-    q.includes('status')
+    q.includes('my progress') ||
+    q.includes('syllabus progress') ||
+    q.includes('how much syllabus') ||
+    q.includes('syllabus coverage') ||
+    q.includes('readiness status')
   ) {
     const remainingCount = pendingTopics.length;
     const paceNeeded = daysToNextExam > 0 ? (remainingCount / daysToNextExam).toFixed(1) : remainingCount;
@@ -315,11 +362,11 @@ function generateDynamicContextualReply(
 
   // 3. Next Exam / Exam Schedule / Timetable countdown
   if (
-    q.includes('next exam') ||
-    q.includes('exam') ||
-    q.includes('date') ||
-    q.includes('when is') ||
-    q.includes('countdown')
+    q === 'next exam' ||
+    q === 'when is my next exam' ||
+    q.includes('exam countdown') ||
+    q.includes('exam schedule') ||
+    q.includes('exam timetable')
   ) {
     if (context.exams.length === 0) {
       return `### 📅 No Exams Recorded Yet\n\nPlease add your exam dates in the **Exams** tab or type them here (e.g. *"Maths exam on Oct 5 at 9am"*). I'll automatically generate your countdown and revision timetable.`;
@@ -337,11 +384,9 @@ function generateDynamicContextualReply(
 
   // 4. Missed sessions / I missed yesterday / Catch up
   if (
-    q.includes('missed') ||
-    q.includes('yesterday') ||
-    q.includes('catch up') ||
-    q.includes('behind') ||
-    q.includes('late')
+    q.includes('missed yesterday') ||
+    q.includes('missed sessions') ||
+    q.includes('catch up on missed')
   ) {
     if (context.missedTasks.length === 0) {
       return `### ✅ Perfect Discipline!\n\nZero overdue study sessions detected for today (${context.referenceDate}). Your revision schedule is completely synchronized and on track.`;
@@ -351,34 +396,115 @@ function generateDynamicContextualReply(
     return `### 🔄 Missed Sessions Detected (${context.missedTasks.length})\n\n${missedList}\n\n**Recovery Protocol:**\nClick **"I MISSED A DAY"** or use the **Daily Check-In** dialog to trigger autonomous rebalancing. Your remaining study slots will be dynamically recalculated without overflowing your daily study limit.`;
   }
 
-  // 5. Study techniques / Feynman / Pomodoro / Active recall / Tips
-  if (
-    q.includes('feynman') ||
-    q.includes('pomodoro') ||
-    q.includes('active recall') ||
-    q.includes('spaced repetition') ||
-    q.includes('how to study') ||
-    q.includes('technique') ||
-    q.includes('method')
-  ) {
-    return `### 🧠 Elite Revision Techniques\n\n1. **The Feynman Technique (Concept Mastery):**\n   Pick a complex topic (e.g., *${targetTopic?.title || 'Data Structures'}*) and explain it on paper in plain English as if teaching a 10-year-old. Identify gaps where you rely on jargon, re-study those gaps, and simplify.\n\n2. **Active Recall & Blurting (Memory Retention):**\n   Close books and write everything you know from memory for 15 minutes. Highlight what you forgot in red.\n\n3. **Spaced Retrieval Intervals:**\n   Review new material on Day 1, Day 3, and Day 7 to cement neural pathways before exam day.`;
-  }
-
-  // 6. Greetings / Introduction / Help
+  // 5. Greetings / Help
   if (
     q === 'hi' ||
     q === 'hello' ||
     q === 'hey' ||
     q.startsWith('hi ') ||
     q.startsWith('hello ') ||
-    q === 'who are you' ||
-    q.includes('help me')
+    q === 'who are you'
   ) {
-    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your live academic planner and exam strategist.\n\n**Current Live Snapshot:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${context.completedCount}/${context.totalTopicsCount} topics** complete (${context.overallProgressPercent}%)\n* **Daily Study Window:** **${context.dailyHours} hours/day**\n\n**Try asking:**\n* *"What should I study right now?"*\n* *"How much syllabus do I have left?"*\n* *"Explain the Feynman technique"*\n* Or upload a timetable image / syllabus PDF!`;
+    return `### 👋 Welcome to Revisionly AI Command Center\n\nI am your academic mentor and revision strategist.\n\n**Live Status:**\n* **Next Exam:** ${nextExam ? `**${nextExam.name}** in **${daysToNextExam} day(s)**` : 'None scheduled'}\n* **Syllabus Progress:** **${context.completedCount}/${context.totalTopicsCount} topics** complete (${context.overallProgressPercent}%)\n* **Daily Study Window:** **${context.dailyHours} hours/day**\n\nAsk me any concept question, homework problem, study advice, or ask me to adjust your timetable!`;
   }
 
-  // 7. General Academic Coaching & Guidance
-  return `### 💡 Academic Strategy (${nextExam ? nextExam.name : 'Revisionly'})\n\nRegarding: *"${query}"*\n\n**Key Strategic Guidance:**\n* **Focus Target:** Direct your prime energy towards **${targetTopic ? targetTopic.title : 'high-yield concepts'}** for your upcoming exam.\n* **Time Management:** Break study time into **${context.sessionDuration || 45}-minute** focused intervals followed by 10-minute active breaks.\n* **Self-Testing:** Spend at least 60% of study time on active recall questions rather than passive reading.\n\nNeed to adjust your timetable? Type *"Rebuild my plan"* or specify *"I can study 4 hours a day"*.`;
+  // 6. Honest offline fallback for any question/query
+  return `### ⚠️ AI Assistant Offline\n\nI couldn't reach the AI language model to answer: *"${query}"*.\n\n**Possible solutions:**\n1. Ensure your device is connected to the internet.\n2. Verify that your **GROQ_API_KEY** is configured and active in Settings or \`.env\`.\n3. If asking about your schedule, try: *"What should I study now?"*, *"When is my next exam?"*, or *"Show my progress"*.`;
+}
+
+async function extractSyllabusAndTimetableClient(
+  message: string,
+  attachments?: AgentAttachment[]
+): Promise<AgentServerResponse | null> {
+  const localKey = typeof window !== 'undefined' ? localStorage.getItem('revision_ai_groq_key')?.trim() : null;
+  const envKey = import.meta.env.VITE_GROQ_API_KEY?.trim() || import.meta.env.GROQ_API_KEY?.trim();
+  const apiKey = (localKey && !localKey.startsWith('your_'))
+    ? localKey
+    : (envKey && !envKey.startsWith('your_'))
+      ? envKey
+      : null;
+
+  if (!apiKey) return null;
+
+  let combinedText = message;
+  for (const att of attachments || []) {
+    if (att.mimeType?.startsWith('text/') || att.mimeType?.includes('csv') || att.mimeType?.includes('json')) {
+      try {
+        const decoded = atob(att.base64Data);
+        combinedText += `\n\n--- Attachment: ${att.name} ---\n${decoded.slice(0, 10000)}`;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const prompt = `Extract all exams and syllabus topics from this student text/document:
+"""
+${combinedText.slice(0, 15000)}
+"""
+
+Return ONLY a valid JSON object in this exact format with NO markdown wrapping:
+{
+  "exams": [
+    { "name": "Exam/Subject Name", "date": "YYYY-MM-DD", "time": "HH:MM AM/PM", "subjectName": "Subject Name" }
+  ],
+  "topics": [
+    { "subjectName": "Subject Name", "title": "Topic or Chapter Title", "priority": "HIGH|MEDIUM|LOW" }
+  ]
+}
+If no exams found, "exams": []. If no topics found, "topics": []. Default time: 09:00 AM. Default year: 2026.`;
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3.8-27b',
+        messages: [{ role: 'user', content: prompt }],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+      }),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const raw = data.choices?.[0]?.message?.content || '{}';
+    const parsed = JSON.parse(raw);
+    const exams = Array.isArray(parsed.exams) ? parsed.exams : [];
+    const topics = Array.isArray(parsed.topics) ? parsed.topics : [];
+
+    if (exams.length === 0 && topics.length === 0) return null;
+
+    if (exams.length > 0 && topics.length > 0) {
+      const subjects = [...new Set(topics.map((t: any) => t.subjectName))];
+      return {
+        message: `> SYLLABUS & TIMETABLE DETECTED\n\nI detected **${exams.length} exam(s)** and **${topics.length} topic(s)** across **${subjects.length} subject(s)**.\n\nClick **IMPORT ALL** below to add these to your syllabus and recalculate your study schedule.`,
+        extractedExams: exams,
+        extractedTopics: topics,
+        tool: { name: 'import_syllabus_and_timetable', params: { exams, topics } },
+      };
+    }
+
+    if (topics.length > 0) {
+      const subjects = [...new Set(topics.map((t: any) => t.subjectName))];
+      return {
+        message: `> SYLLABUS TOPICS DETECTED\n\nI found **${topics.length} topic(s)** across **${subjects.length} subject(s)**:\n\nClick **IMPORT ${topics.length} TOPICS** below to add them to your syllabus.`,
+        extractedTopics: topics,
+        tool: { name: 'import_topics', params: { topics } },
+      };
+    }
+
+    return {
+      message: `> EXAM TIMETABLE DETECTED\n\nI found **${exams.length} exam(s)**.\n\nClick **IMPORT ALL** below to add these to your schedule.`,
+      extractedExams: exams,
+      tool: { name: 'import_exams', params: { exams } },
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -460,17 +586,17 @@ async function runClientAgent(
       };
     }
 
-    case 'EXTRACT_TIMETABLE': {
-      const file = attachments?.[0];
+    case 'EXTRACT_DATA': {
+      const extracted = await extractSyllabusAndTimetableClient(message, attachments);
+      if (extracted) {
+        return extracted;
+      }
+      const directReply = await callGroqDirect(message, context, history);
+      if (directReply) {
+        return { message: directReply };
+      }
       return {
-        message: `> TIMETABLE UPLOAD RECEIVED (${file?.name || 'File'})\n\nI'm ready to parse this timetable and populate your exam schedule.\n\nYou can also type any specific exam dates directly if you want immediate scheduling.`,
-      };
-    }
-
-    case 'EXTRACT_SYLLABUS': {
-      const file = attachments?.[0];
-      return {
-        message: `> SYLLABUS UPLOAD RECEIVED (${file?.name || 'Document'})\n\nReceived your syllabus document. I'll break it down into chapter modules and prioritize high-yield exam topics.`,
+        message: generateDynamicContextualReply(message, context),
       };
     }
 
@@ -511,9 +637,9 @@ export async function callAgent(
   };
 
   try {
-    // 1. Try server endpoint with 10-second timeout
+    // 1. Try server endpoint with 35-second timeout for full LLM response
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     const response = await fetch('/api/ai/agent', {
       method: 'POST',

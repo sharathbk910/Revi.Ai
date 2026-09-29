@@ -50,6 +50,42 @@ export const authService = {
     return { user: data.user, session: data.session, error };
   },
 
+  async signInWithOtp(email: string): Promise<{ error: AuthError | Error | null }> {
+    if (!isSupabaseConfigured()) {
+      return {
+        error: new Error('Supabase is not configured yet. Add credentials in .env to use Email OTP.'),
+      };
+    }
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim().toLowerCase(),
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: window.location.origin,
+      },
+    });
+
+    return { error };
+  },
+
+  async verifyOtp(email: string, token: string): Promise<AuthResponse> {
+    if (!isSupabaseConfigured()) {
+      return {
+        user: null,
+        session: null,
+        error: new Error('Supabase is not configured yet.'),
+      };
+    }
+
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token: token.trim(),
+      type: 'email',
+    });
+
+    return { user: data.user, session: data.session, error };
+  },
+
   async signInWithGoogle(): Promise<{ error: AuthError | Error | null }> {
     if (!isSupabaseConfigured()) {
       return {

@@ -17,7 +17,9 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
   const { addTopic, subjects } = usePlanner();
 
   const [title, setTitle] = useState('');
-  const [subjectId, setSubjectId] = useState(initialSubjectId || subjects[0]?.id || 'sub-webdev');
+  const [isCreatingNewCourse, setIsCreatingNewCourse] = useState(subjects.length === 0);
+  const [newCourseName, setNewCourseName] = useState('');
+  const [subjectId, setSubjectId] = useState(initialSubjectId || subjects[0]?.id || '');
   const [estimatedMinutes, setEstimatedMinutes] = useState(45);
   const [priority, setPriority] = useState<Priority>('MEDIUM');
 
@@ -27,16 +29,28 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
     e.preventDefault();
     if (!title.trim()) return;
 
-    const selectedSubject = subjects.find(s => s.id === subjectId);
+    let finalSubjectId = subjectId;
+    let finalSubjectName = 'General Course';
+
+    if (isCreatingNewCourse || subjects.length === 0 || !subjectId) {
+      finalSubjectName = (newCourseName.trim() || 'General Course');
+      finalSubjectId = `sub-${finalSubjectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    } else {
+      const selectedSubject = subjects.find(s => s.id === subjectId);
+      finalSubjectName = selectedSubject?.name || 'General Course';
+      finalSubjectId = selectedSubject?.id || subjectId;
+    }
+
     addTopic({
       title: title.trim(),
-      subjectId,
-      subjectName: selectedSubject?.name || 'Academic Subject',
+      subjectId: finalSubjectId,
+      subjectName: finalSubjectName,
       estimatedMinutes: Number(estimatedMinutes),
       priority,
     });
 
     setTitle('');
+    setNewCourseName('');
     onClose();
   };
 
@@ -77,20 +91,43 @@ export const AddTopicModal: React.FC<AddTopicModalProps> = ({
           </div>
 
           <div>
-            <label className="block text-[var(--muted-foreground)] uppercase text-[10px] mb-1">
-              Academic Course
-            </label>
-            <select
-              value={subjectId}
-              onChange={e => setSubjectId(e.target.value)}
-              className="editorial-input text-xs"
-            >
-              {subjects.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[var(--muted-foreground)] uppercase text-[10px]">
+                Academic Course
+              </label>
+              {subjects.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsCreatingNewCourse(!isCreatingNewCourse)}
+                  className="text-[10px] text-[var(--accent)] hover:underline"
+                >
+                  {isCreatingNewCourse ? 'Select existing' : '+ New Course'}
+                </button>
+              )}
+            </div>
+
+            {isCreatingNewCourse || subjects.length === 0 ? (
+              <input
+                type="text"
+                required
+                value={newCourseName}
+                onChange={e => setNewCourseName(e.target.value)}
+                placeholder="e.g. Computer Science, Mathematics"
+                className="editorial-input text-xs"
+              />
+            ) : (
+              <select
+                value={subjectId}
+                onChange={e => setSubjectId(e.target.value)}
+                className="editorial-input text-xs"
+              >
+                {subjects.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">

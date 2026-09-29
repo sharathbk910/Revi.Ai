@@ -71,8 +71,8 @@ export function generateStudySchedule(
   referenceDate: string = '2026-09-28',
   existingTasks: StudyTask[] = []
 ): { tasks: StudyTask[]; capacityWarning: CapacityWarning | null } {
-  // If no exams or no topics, return empty schedule
-  if (exams.length === 0 || topics.length === 0) {
+  // If no topics, return empty schedule
+  if (topics.length === 0) {
     return { tasks: [], capacityWarning: null };
   }
 
@@ -114,38 +114,40 @@ export function generateStudySchedule(
   const dailySlots = getAvailableTimeSlots(availability.dailyHours, sessionDur);
   const slotsPerDay = dailySlots.length;
 
-  const earliestExam = sortedExams[0];
-  const daysToEarliestExam = Math.max(1, daysBetween(referenceDate, earliestExam.date));
-  
-  // Check if upcoming subject has more topics than slots available before its exam
-  let totalDeficit = 0;
-  let overloadSubject = '';
+  let capacityWarning: CapacityWarning | null = null;
+  if (sortedExams.length > 0) {
+    const earliestExam = sortedExams[0];
+    const daysToEarliestExam = Math.max(1, daysBetween(referenceDate, earliestExam.date));
+    
+    // Check if upcoming subject has more topics than slots available before its exam
+    let totalDeficit = 0;
+    let overloadSubject = '';
 
-  for (const exam of sortedExams) {
-    const subTopics = pendingTopics.filter(t => t.subjectId === exam.subjectId);
-    const daysUntil = Math.max(0, daysBetween(referenceDate, exam.date));
-    const availableSlotsBeforeExam = daysUntil * slotsPerDay;
+    for (const exam of sortedExams) {
+      const subTopics = pendingTopics.filter(t => t.subjectId === exam.subjectId);
+      const daysUntil = Math.max(0, daysBetween(referenceDate, exam.date));
+      const availableSlotsBeforeExam = daysUntil * slotsPerDay;
 
-    if (subTopics.length > availableSlotsBeforeExam && availableSlotsBeforeExam > 0) {
-      const deficitSlots = subTopics.length - availableSlotsBeforeExam;
-      const deficitH = Math.round((deficitSlots * sessionDur) / 60 * 10) / 10;
-      if (deficitH > totalDeficit) {
-        totalDeficit = deficitH;
-        overloadSubject = exam.subjectName;
+      if (subTopics.length > availableSlotsBeforeExam && availableSlotsBeforeExam > 0) {
+        const deficitSlots = subTopics.length - availableSlotsBeforeExam;
+        const deficitH = Math.round((deficitSlots * sessionDur) / 60 * 10) / 10;
+        if (deficitH > totalDeficit) {
+          totalDeficit = deficitH;
+          overloadSubject = exam.subjectName;
+        }
       }
     }
-  }
 
-  let capacityWarning: CapacityWarning | null = null;
-  if (totalDeficit > 0) {
-    capacityWarning = {
-      isOverloaded: true,
-      deficitHours: totalDeficit,
-      totalTopics: pendingTopics.length,
-      totalAvailableHours: Math.round(daysToEarliestExam * availability.dailyHours * 10) / 10,
-      earliestExamDays: daysToEarliestExam,
-      message: `Schedule pressure detected for ${overloadSubject}: ${totalDeficit} hours deficit before exam.`,
-    };
+    if (totalDeficit > 0) {
+      capacityWarning = {
+        isOverloaded: true,
+        deficitHours: totalDeficit,
+        totalTopics: pendingTopics.length,
+        totalAvailableHours: Math.round(daysToEarliestExam * availability.dailyHours * 10) / 10,
+        earliestExamDays: daysToEarliestExam,
+        message: `Schedule pressure detected for ${overloadSubject}: ${totalDeficit} hours deficit before exam.`,
+      };
+    }
   }
 
   // 5. Generate Daily Schedule Plan

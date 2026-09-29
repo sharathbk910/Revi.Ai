@@ -416,14 +416,16 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
         }
 
         case 'import_exams': {
-          const importedExams = tool.params.exams as Array<{ name: string; date: string; time: string; subjectName?: string }>;
+          const importedExams = (tool.params.exams as Array<{ name: string; date: string; time: string; subjectName?: string }>) || [];
           let count = 0;
           for (const exam of importedExams) {
-            const subjectId = `subject-${exam.name.toLowerCase().replace(/\s+/g, '-')}`;
+            const subjectName = exam.subjectName || exam.name;
+            const existingSubject = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase());
+            const subjectId = existingSubject?.id || `subject-${subjectName.toLowerCase().replace(/\s+/g, '-')}`;
             await addExam({
               name: exam.name,
               subjectId,
-              subjectName: exam.subjectName || exam.name,
+              subjectName,
               date: exam.date,
               time: exam.time || '09:00 AM',
               durationMinutes: 180,
@@ -431,14 +433,17 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
             });
             count++;
           }
-          return `> EXAMS.IMPORTED\n\n**${count} exam(s)** added to your schedule.\n\nOpen the Exams view to review and edit them.`;
+          recalculateSchedule();
+          addToast('SUCCESS', '> EXAMS.IMPORTED', `Added ${count} exam(s) to timetable.`);
+          return `> EXAMS.IMPORTED\n\n**${count} exam(s)** added to your schedule.\n\nOpen the **Exams** view to review them.`;
         }
 
         case 'import_topics': {
-          const importedTopics = tool.params.topics as Array<{ subjectName: string; title: string; priority?: string }>;
+          const importedTopics = (tool.params.topics as Array<{ subjectName: string; title: string; priority?: string }>) || [];
           const grouped = importedTopics.reduce((acc, t) => {
-            acc[t.subjectName] = acc[t.subjectName] || [];
-            acc[t.subjectName].push(t.title);
+            const sName = t.subjectName || 'General Course';
+            acc[sName] = acc[sName] || [];
+            acc[sName].push(t.title);
             return acc;
           }, {} as Record<string, string[]>);
 
@@ -446,11 +451,52 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
           for (const [subjectName, topicTitles] of Object.entries(grouped)) {
             const existingSubject = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase());
             const subjectId = existingSubject?.id || `subject-${subjectName.toLowerCase().replace(/\s+/g, '-')}`;
-            await bulkAddTopics(subjectId, topicTitles);
+            await bulkAddTopics(subjectId, topicTitles, subjectName);
             totalCount += topicTitles.length;
           }
+          recalculateSchedule();
+          addToast('SUCCESS', '> TOPICS.IMPORTED', `Added ${totalCount} topic(s) across ${Object.keys(grouped).length} subject(s).`);
+          return `> SYLLABUS.IMPORTED\n\n**${totalCount} topic(s)** imported across **${Object.keys(grouped).length} subject(s)**.\n\nOpen **Syllabus** to review and start revising them.`;
+        }
 
-          return `> SYLLABUS.IMPORTED\n\n**${totalCount} topic(s)** imported across **${Object.keys(grouped).length} subject(s)**.\n\nOpen **Syllabus** to review and edit them.`;
+        case 'import_syllabus_and_timetable': {
+          const importedExams = (tool.params.exams as Array<{ name: string; date: string; time: string; subjectName?: string }>) || [];
+          let examCount = 0;
+          for (const exam of importedExams) {
+            const subjectName = exam.subjectName || exam.name;
+            const existingSubject = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase());
+            const subjectId = existingSubject?.id || `subject-${subjectName.toLowerCase().replace(/\s+/g, '-')}`;
+            await addExam({
+              name: exam.name,
+              subjectId,
+              subjectName,
+              date: exam.date,
+              time: exam.time || '09:00 AM',
+              durationMinutes: 180,
+              priority: 'HIGH',
+            });
+            examCount++;
+          }
+
+          const importedTopics = (tool.params.topics as Array<{ subjectName: string; title: string; priority?: string }>) || [];
+          const grouped = importedTopics.reduce((acc, t) => {
+            const sName = t.subjectName || 'General Course';
+            acc[sName] = acc[sName] || [];
+            acc[sName].push(t.title);
+            return acc;
+          }, {} as Record<string, string[]>);
+
+          let topicCount = 0;
+          for (const [subjectName, topicTitles] of Object.entries(grouped)) {
+            const existingSubject = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase());
+            const subjectId = existingSubject?.id || `subject-${subjectName.toLowerCase().replace(/\s+/g, '-')}`;
+            await bulkAddTopics(subjectId, topicTitles, subjectName);
+            topicCount += topicTitles.length;
+          }
+
+          recalculateSchedule();
+          addToast('SUCCESS', '> DATA.SYNCHRONIZED', `Imported ${examCount} exam(s) and ${topicCount} topic(s).`);
+          return `> SYLLABUS & TIMETABLE IMPORTED\n\nSuccessfully imported:\n- **${examCount} exam(s)** into your timetable\n- **${topicCount} topic(s)** across **${Object.keys(grouped).length} subject(s)** into your syllabus\n\nYour study plan has been recalculated automatically!`;
         }
 
         default:
@@ -769,6 +815,26 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
                     {renderMarkdown(msg.content)}
                   </div>
 
+                  {/* Unified import button if both exams and topics are extracted */}
+                  {msg.extractedExams && msg.extractedExams.length > 0 && msg.extractedTopics && msg.extractedTopics.length > 0 && (
+                    <div className="mt-3 p-3 bg-[var(--background)] border border-[var(--accent)] flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-mono text-[11px] text-[var(--accent)] uppercase font-semibold">
+                        {msg.extractedExams.length} Exam(s) + {msg.extractedTopics.length} Topic(s) Ready to Sync
+                      </div>
+                      <button
+                        onClick={() => executeTool({
+                          name: 'import_syllabus_and_timetable',
+                          params: { exams: msg.extractedExams, topics: msg.extractedTopics }
+                        })}
+                        disabled={isbusy}
+                        className="btn-primary text-[11px] px-3.5 py-1.5 font-mono shadow-sm"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 inline mr-1" />
+                        IMPORT ALL (EXAMS + SYLLABUS)
+                      </button>
+                    </div>
+                  )}
+
                   {/* Extracted exams review */}
                   {msg.extractedExams && msg.extractedExams.length > 0 && (
                     <ExtractedExamsReview
@@ -797,6 +863,29 @@ export const NexAssistantModal: React.FC<NexAssistantModalProps> = ({ isOpen, on
                   <div className="font-mono text-xs leading-relaxed text-[var(--foreground)]">
                     {renderMarkdown(msg.content)}
                   </div>
+
+                  {/* Unified import button if both exams and topics are extracted */}
+                  {msg.extractedExams && msg.extractedExams.length > 0 && msg.extractedTopics && msg.extractedTopics.length > 0 && (
+                    <div className="mt-3 p-3 bg-[var(--background)] border border-[var(--accent)] flex flex-wrap items-center justify-between gap-2">
+                      <div className="font-mono text-[11px] text-[var(--accent)] uppercase font-semibold">
+                        {msg.extractedExams.length} Exam(s) + {msg.extractedTopics.length} Topic(s) Ready to Sync
+                      </div>
+                      <button
+                        onClick={() => {
+                          resolveMessage(msg.id);
+                          executeTool({
+                            name: 'import_syllabus_and_timetable',
+                            params: { exams: msg.extractedExams, topics: msg.extractedTopics }
+                          });
+                        }}
+                        disabled={isbusy}
+                        className="btn-primary text-[11px] px-3.5 py-1.5 font-mono shadow-sm"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 inline mr-1" />
+                        IMPORT ALL (EXAMS + SYLLABUS)
+                      </button>
+                    </div>
+                  )}
 
                   {msg.extractedExams && msg.extractedExams.length > 0 && (
                     <ExtractedExamsReview

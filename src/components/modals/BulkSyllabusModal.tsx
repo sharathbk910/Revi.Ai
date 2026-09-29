@@ -15,7 +15,9 @@ export const BulkSyllabusModal: React.FC<BulkSyllabusModalProps> = ({
 }) => {
   const { bulkAddTopics, subjects } = usePlanner();
 
-  const [subjectId, setSubjectId] = useState(initialSubjectId || subjects[0]?.id || 'sub-webdev');
+  const [isCreatingNewCourse, setIsCreatingNewCourse] = useState(subjects.length === 0);
+  const [newCourseName, setNewCourseName] = useState('');
+  const [subjectId, setSubjectId] = useState(initialSubjectId || subjects[0]?.id || '');
   const [rawText, setRawText] = useState('');
 
   if (!isOpen) return null;
@@ -29,8 +31,21 @@ export const BulkSyllabusModal: React.FC<BulkSyllabusModalProps> = ({
 
     if (lines.length === 0) return;
 
-    bulkAddTopics(subjectId, lines);
+    let finalSubId = subjectId;
+    let fallbackName = 'General Course';
+
+    if (isCreatingNewCourse || subjects.length === 0 || !subjectId) {
+      fallbackName = newCourseName.trim() || 'General Course';
+      finalSubId = `sub-${fallbackName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    } else {
+      const selected = subjects.find(s => s.id === subjectId);
+      fallbackName = selected?.name || 'General Course';
+      finalSubId = selected?.id || subjectId;
+    }
+
+    bulkAddTopics(finalSubId, lines, fallbackName);
     setRawText('');
+    setNewCourseName('');
     onClose();
   };
 
@@ -59,20 +74,43 @@ export const BulkSyllabusModal: React.FC<BulkSyllabusModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-4 font-mono text-xs">
           <div>
-            <label className="block text-[var(--muted-foreground)] uppercase text-[10px] mb-1">
-              Select Target Course
-            </label>
-            <select
-              value={subjectId}
-              onChange={e => setSubjectId(e.target.value)}
-              className="editorial-input text-xs"
-            >
-              {subjects.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code})
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[var(--muted-foreground)] uppercase text-[10px]">
+                Select Target Course
+              </label>
+              {subjects.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsCreatingNewCourse(!isCreatingNewCourse)}
+                  className="text-[10px] text-[var(--accent)] hover:underline"
+                >
+                  {isCreatingNewCourse ? 'Select existing' : '+ New Course'}
+                </button>
+              )}
+            </div>
+
+            {isCreatingNewCourse || subjects.length === 0 ? (
+              <input
+                type="text"
+                required
+                value={newCourseName}
+                onChange={e => setNewCourseName(e.target.value)}
+                placeholder="e.g. Operating Systems, Thermodynamics"
+                className="editorial-input text-xs"
+              />
+            ) : (
+              <select
+                value={subjectId}
+                onChange={e => setSubjectId(e.target.value)}
+                className="editorial-input text-xs"
+              >
+                {subjects.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div>

@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
+import { subjectService } from './subjectService';
 import type { Exam } from '../types';
 
 export const examService = {
@@ -32,11 +33,16 @@ export const examService = {
   async createExam(userId: string, exam: Omit<Exam, 'id'>): Promise<Exam | null> {
     if (!isSupabaseConfigured() || !userId) return null;
 
+    let validSubjectId: string | null = null;
+    if (exam.subjectId || exam.subjectName) {
+      validSubjectId = await subjectService.ensureSubject(userId, exam.subjectId, exam.subjectName);
+    }
+
     const { data, error } = await supabase
       .from('exams')
       .insert({
         user_id: userId,
-        subject_id: exam.subjectId || null,
+        subject_id: validSubjectId,
         exam_name: exam.name,
         exam_date: exam.date,
         exam_time: exam.time,

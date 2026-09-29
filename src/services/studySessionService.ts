@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
+import { isUUID } from './subjectService';
 import type { StudyTask } from '../types';
 
 export const studySessionService = {
@@ -36,9 +37,9 @@ export const studySessionService = {
   async syncGeneratedSessions(userId: string, tasks: StudyTask[]): Promise<boolean> {
     if (!isSupabaseConfigured() || !userId || tasks.length === 0) return false;
 
-    // Filter valid topic tasks (avoid rev- placeholders with invalid UUIDs)
+    // Filter valid topic tasks (avoid rev- placeholders or temporary non-UUID ids)
     const validRows = tasks
-      .filter(t => !t.topicId.startsWith('rev-') && t.topicId.length > 10)
+      .filter(t => isUUID(t.topicId))
       .map(t => ({
         user_id: userId,
         topic_id: t.topicId,

@@ -145,33 +145,51 @@ export async function queryAIAssistant(reqData: AIAssistantRequest): Promise<{ r
   }
 
   try {
-    const systemPrompt = `You are REVISIONLY AI, the academic study strategist for Revisionly ("Your syllabus. Your exams. Your plan.").
-Tone: Editorial, precise, direct, motivating, academic command center.
-Keep answers concise, direct, and actionable (2-4 sentences max unless detailing a plan).
+    const systemPrompt = `You are REVISIONLY AI — an expert academic mentor, study coach, and tutor embedded in the Revisionly study planner app.
+
+CORE DIRECTIVE:
+1. ALWAYS ANSWER THE USER'S QUESTION DIRECTLY, ACCURATELY, AND FULLY FIRST.
+2. If the user asks about ANY academic subject, concept, theory, formula, code, definition, science, math, or study technique:
+   - Provide a clear, comprehensive, and high-quality explanation.
+   - Use clear formatting (markdown, bold text, bullet points).
+   - NEVER deflect, pivot away, or ignore the question.
+3. If the user asks about their schedule, what to study next, or how they are doing:
+   - Reference their current timetable and status below to provide actionable guidance.
 
 CURRENT STUDENT CONTEXT:
 - Next Exam: ${reqData.context.nextExam ? `${reqData.context.nextExam.name} in ${reqData.context.nextExam.daysRemaining} days (${reqData.context.nextExam.date})` : 'None'}
 - Today's Progress: ${reqData.context.todayTasks.filter(t => t.status === 'COMPLETED').length} / ${reqData.context.todayTasks.length} tasks completed
 - Overall Syllabus Readiness: ${reqData.context.overallProgressPercent}% (${reqData.context.completedCount}/${reqData.context.totalTopicsCount} topics)
 - Daily Study Capacity: ${reqData.context.dailyHours}h
-- Incomplete/Missed Tasks: ${reqData.context.missedTasks.map(t => `${t.title} (${t.subjectName})`).join(', ') || 'None'}
-- Today's Scheduled Tasks:
-${reqData.context.todayTasks.map(t => `  • [${t.startTime}] ${t.title} (${t.subjectName}) - ${t.status}`).join('\n')}
+- Incomplete/Missed Tasks: ${reqData.context.missedTasks.map(t => `${t.title} (${t.subjectName})`).join(', ') || 'None'}`;
 
-Always address the user's specific timetable and state. Never sound like a generic detached assistant.`;
+    const modelsToTry = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
 
-    const completion = await groq.chat.completions.create({
-      model: 'qwen/qwen3.8-27b',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: reqData.query },
-      ],
-      temperature: 0.5,
-      max_tokens: 450,
-    });
+    for (const model of modelsToTry) {
+      try {
+        const completion = await groq.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: reqData.query },
+          ],
+          temperature: 0.6,
+          max_tokens: 600,
+        });
 
-    const reply = completion.choices[0]?.message?.content?.trim() || 'Command acknowledged. Focus on your immediate upcoming study block.';
-    return { reply, fallback: false };
+        const reply = completion.choices[0]?.message?.content?.trim();
+        if (reply && reply.length > 0) {
+          return { reply, fallback: false };
+        }
+      } catch (err: unknown) {
+        console.warn(`[Groq Assistant] Model ${model} failed:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    return {
+      reply: getDeterministicAssistantReply(reqData.query, reqData.context),
+      fallback: true,
+    };
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.warn('[Groq Assistant] Call failed, fallback used:', errMsg);
@@ -183,12 +201,12 @@ Always address the user's specific timetable and state. Never sound like a gener
 }
 
 /**
- * Intelligent deterministic fallback responses when Groq is offline or no key is provided
+ * Deterministic fallback responses when Groq is offline or no key is provided
  */
 function getDeterministicAssistantReply(query: string, ctx: AIAssistantRequest['context']): string {
   const lower = query.toLowerCase();
 
-  if (lower.includes('study now') || lower.includes('start')) {
+  if (lower.includes('study now') || lower === 'start' || lower.includes('what should i study')) {
     const pending = ctx.todayTasks.filter(t => t.status !== 'COMPLETED');
     if (pending.length > 0) {
       return `Target identified: Begin with "${pending[0].title}" (${pending[0].subjectName}) at ${pending[0].startTime}. Lock in for a 45-minute deep work block with zero distractions.`;
@@ -203,16 +221,16 @@ function getDeterministicAssistantReply(query: string, ctx: AIAssistantRequest['
     return `Zero missed tasks detected! Your current schedule is completely synchronized and on track.`;
   }
 
-  if (lower.includes('revise') || lower.includes('exam')) {
+  if (lower === 'next exam' || lower.includes('when is my next exam')) {
     if (ctx.nextExam) {
       return `Primary objective: ${ctx.nextExam.name} on ${ctx.nextExam.date} (${ctx.nextExam.daysRemaining} days remaining). Dedicate your next study blocks to core chapters and self-testing.`;
     }
     return `Add an exam in the Exams tab to enable high-yield revision recommendations.`;
   }
 
-  if (lower.includes('prepared') || lower.includes('progress') || lower.includes('how much')) {
+  if (lower.includes('my progress') || lower.includes('how much syllabus')) {
     return `TELEMETRY METRICS:\n• Overall Readiness: ${ctx.overallProgressPercent}%\n• Topics Mastered: ${ctx.completedCount} / ${ctx.totalTopicsCount}\n• Days to Next Exam: ${ctx.nextExam?.daysRemaining || 0}d\nMaintain daily momentum to hit 100% syllabus mastery.`;
   }
 
-  return `Recommendation: Prioritize your nearest upcoming exam (${ctx.nextExam?.name || 'Milestone'}). Knock off 1-2 focused topics in today's remaining study slots.`;
+  return `### ⚠️ AI Assistant Offline\n\nI couldn't connect to the AI model to answer: "${query}". Please check your internet connection or verify your GROQ_API_KEY in Settings.`;
 }
